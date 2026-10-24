@@ -1,19 +1,9 @@
 /* ------------- applicat.c ------------- */
 
 #include "dfpcomp.h"
-
-int ScreenHeight;
 WINDOW ApplicationWindow = NULL;
-extern DBOX Display;
 
 static void DoWindowColors(WINDOW);
-
-#ifdef INCLUDE_WINDOWOPTIONS
-static void SelectTexture(void);
-static void SelectBorder(WINDOW);
-static void SelectTitle(WINDOW);
-static void SelectStatusBar(WINDOW);
-#endif
 
 WINDOW oldFocus;
 #ifdef INCLUDE_MULTI_WINDOWS
@@ -28,27 +18,10 @@ static char Cwd[65];
 static int CreateWindowMsg(WINDOW wnd)
 {
     int rtn;
-	ApplicationWindow = wnd;
-    ScreenHeight = SCREENHEIGHT;
-	getcwd(Cwd, 64);
+    ApplicationWindow = wnd;
+    getcwd(Cwd, 64);
 
-		DoWindowColors (wnd);
-	
-
-    if (SCREENHEIGHT != SysConfig.VideoCurrentResolution.VRes)    {
-        SetScreenHeight(SysConfig.VideoCurrentResolution.VRes);
-        if (WindowHeight(wnd) == ScreenHeight ||
-                SCREENHEIGHT-1 < GetBottom(wnd))    {
-            WindowHeight(wnd) = SCREENHEIGHT;
-            GetBottom(wnd) = GetTop(wnd)+WindowHeight(wnd)-1;
-            wnd->RestoredRC = WindowRect(wnd);
-        }
-    }
-#ifdef INCLUDE_WINDOWOPTIONS
-    SelectBorder(wnd);
-    SelectTitle(wnd);
-    SelectStatusBar(wnd);
-#endif
+    DoWindowColors (wnd);
 
     rtn = BaseWndProc(APPLICATION, wnd, CREATE_WINDOW, 0, 0);
     if (wnd->extension != NULL)
@@ -133,6 +106,15 @@ static void ShiftChangedMsg(WINDOW wnd, PARAM p1)
         AltDown = TRUE;
     else if (AltDown)    {
         AltDown = FALSE;
+        if (ZenMode && HasOpenEditor() && !isVisible(wnd->MenuBarWnd)) {
+            SetVisible(wnd->MenuBarWnd);
+            if (wnd->StatusBar != NULL) {
+                SetVisible(wnd->StatusBar);
+                ReFocus(wnd->StatusBar);
+                SendMessage(wnd->StatusBar, PAINT, 0, 0);
+            }
+            ReFocus(wnd->MenuBarWnd);
+        }
         if (wnd->MenuBarWnd != inFocus)
             SendMessage(NULL, HIDE_CURSOR, 0, 0);
         SendMessage(wnd->MenuBarWnd, KEYBOARD, F10, 0);
@@ -176,8 +158,6 @@ static int CloseWindowMsg(WINDOW wnd)
 #endif
     PostMessage(NULL, STOP, 0, 0);
     rtn = BaseWndProc(APPLICATION, wnd, CLOSE_WINDOW, 0, 0);
-    if (ScreenHeight != SCREENHEIGHT)
-        SetScreenHeight(ScreenHeight);
 	ApplicationWindow = NULL;
 	setdisk(toupper(*Cwd) - 'A');
 	chdir(Cwd+2);
@@ -245,15 +225,11 @@ void ExecuteNonDFP (char *CmdLine)
 	oldFocus = inFocus;
     SendMessage(ApplicationWindow, HIDE_WINDOW, 0, 0);
     SwitchCursor();
-    if (ScreenHeight != SCREENHEIGHT)
-        SetScreenHeight(ScreenHeight);
     SendMessage(NULL, HIDE_MOUSE, 0, 0);
     printf("Type EXIT to return to %s.\n", 
            ProgramModule.Description);
     fflush(stdout);
     spawnl(P_WAIT, CmdLine, NULL);
-    if (SCREENHEIGHT != SysConfig.VideoCurrentResolution.VRes)
-        SetScreenHeight(SysConfig.VideoCurrentResolution.VRes);
     SwitchCursor();
 	SendMessage(ApplicationWindow, SHOW_WINDOW, 0, 0);
     SendMessage(oldFocus, SETFOCUS, TRUE, 0);
@@ -390,53 +366,22 @@ static void DoWindowColors(WINDOW wnd)
 }
 
 /* ---- select screen lines ---- */
-void SelectLines(VideoResolution  reqVR)
+void SelectLines(VideoResolution reqVR)
 {
-	
-	  SysConfig.VideoCurrentResolution = reqVR;
-
-    if (SCREENHEIGHT != reqVR.VRes) {
-
-        SetScreenHeight(reqVR.VRes);
-
-        SendMessage(ApplicationWindow, SIZE, (PARAM) GetRight(ApplicationWindow),
-                 SCREENHEIGHT-1);
-    	   return;
-#if 0
-    	/* --- adjust if current size does not fit --- */
-    	if (WindowHeight(ApplicationWindow) > SCREENHEIGHT)
-             SendMessage(ApplicationWindow, SIZE, (PARAM) GetRight(ApplicationWindow),
-                 (PARAM) GetTop(ApplicationWindow)+SCREENHEIGHT-1);
-    	/* --- if window is off-screen, move it on-screen --- */
-    	if (GetTop(ApplicationWindow) >= SCREENHEIGHT-1)
-     		 SendMessage(ApplicationWindow, MOVE, (PARAM) GetLeft(ApplicationWindow),
-    			  (PARAM) SCREENHEIGHT-WindowHeight(ApplicationWindow));
-#endif
-    }
+    (void)reqVR;
+    SysConfig.VideoCurrentResolution = TXT25;
+    SetScreenHeight(25);
 }
 
 /* ---- set the screen height in the video hardware ---- */
 void SetScreenHeight(int height)
 {
-    if (isEGA() || isVGA())    {
-        SendMessage(NULL, SAVE_CURSOR, 0, 0);
-        switch (height)    {
-            case 25:
-                Set25();
-                break;
-            case 43:
-                Set43();
-                break;
-            case 50:
-                Set50();
-                break;
-            default:
-                break;
-        }
-        SendMessage(NULL, RESTORE_CURSOR, 0, 0);
-        SendMessage(NULL, RESET_MOUSE, 0, 0);
-        SendMessage(NULL, SHOW_MOUSE, 0, 0);
-    }
+    (void)height;
+    SendMessage(NULL, SAVE_CURSOR, 0, 0);
+    Set25();
+    SendMessage(NULL, RESTORE_CURSOR, 0, 0);
+    SendMessage(NULL, RESET_MOUSE, 0, 0);
+    SendMessage(NULL, SHOW_MOUSE, 0, 0);
 }
 
 
@@ -450,46 +395,4 @@ BOOL SelectColorScheme (ColorScheme cs)
 
     return TRUE;
 }
-
-
-#ifdef INCLUDE_WINDOWOPTIONS
-
-/* ----- select the screen texture ----- */
-static void SelectTexture(void)
-{
-    cfg.Texture = CheckBoxSetting(&Display, ID_TEXTURE);
-}
-
-/* -- select whether the application screen has a border -- */
-static void SelectBorder(WINDOW wnd)
-{
-    cfg.Border = CheckBoxSetting(&Display, ID_BORDER);
-    if (cfg.Border)
-        AddAttribute(wnd, HASBORDER);
-    else
-        ClearAttribute(wnd, HASBORDER);
-}
-
-/* select whether the application screen has a status bar */
-static void SelectStatusBar(WINDOW wnd)
-{
-    cfg.StatusBar = CheckBoxSetting(&Display, ID_STATUSBAR);
-    if (cfg.StatusBar)
-        AddAttribute(wnd, HASSTATUSBAR);
-    else
-        ClearAttribute(wnd, HASSTATUSBAR);
-}
-
-/* select whether the application screen has a title bar */
-static void SelectTitle(WINDOW wnd)
-{
-    cfg.Title = CheckBoxSetting(&Display, ID_TITLE);
-    if (cfg.Title)
-        AddAttribute(wnd, HASTITLEBAR);
-    else
-        ClearAttribute(wnd, HASTITLEBAR);
-}
-
-
-#endif
 

@@ -21,8 +21,8 @@
 #define COUNT (1193280L / FREQUENCY)
 #define ZEROFLAG 0x40
 #define MAXSAVES 50
-#define SCREENWIDTH  (peekb(0x40,0x4a) & 255)
-#define SCREENHEIGHT (isVGA() || isEGA() ? peekb(0x40,0x84)+1 : 25)
+#define SCREENWIDTH  80
+#define SCREENHEIGHT 25
 #define clearBIOSbuffer() *(int far *)(MK_FP(0x40,0x1a)) = \
 		        	      *(int far *)(MK_FP(0x40,0x1c));
 
@@ -104,11 +104,8 @@ int timer_disabled(int timer);
 #endif
 
 /* ----------- video adaptor prototypes ----------- */
-BOOL isEGA(void);
 BOOL isVGA(void);
 void Set25(void);
-void Set43(void);
-void Set50(void);
 
 #ifndef BLACK
 /* ============= Color Macros ============ */

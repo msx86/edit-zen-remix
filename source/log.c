@@ -2,7 +2,6 @@
 
 #include "dflatp.h"
 #include "dfptools.h"
-#include "helpbox.h"
 
 enum dfplog_messages {
     /* ------------- Legacy Log dialog box ------------- */

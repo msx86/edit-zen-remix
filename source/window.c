@@ -71,6 +71,7 @@ WINDOW CreateWindow(
         wnd->parent = parent;
         wnd->oldcondition = wnd->condition = ISRESTORED;
         wnd->RestoredRC = wnd->rc;
+        wnd->HighlightType = HL_NONE;
 		InitWindowColors(wnd);
         SendMessage(wnd, CREATE_WINDOW, 0, 0);
         if (isVisible(wnd))
@@ -93,7 +94,7 @@ void InsertTitle(WINDOW wnd, const char *ttl)
     strcpy(wnd->title, ttl);
 }
 
-static unsigned char line[300];
+static unsigned char line[512];
 
 /* ------ write a line to video window client area ------ */
 void writeline(WINDOW wnd, char *str, int x, int y, BOOL pad)
@@ -101,16 +102,23 @@ void writeline(WINDOW wnd, char *str, int x, int y, BOOL pad)
     char *cp;
     int len;
     int dif;
-	char wline[200];
+    char wline[512];
+    int maxw = sizeof(wline) - 1;
+    int copy_len;
 
-	memset(wline, 0, 200);
+    memset(wline, 0, sizeof(wline));
     len = LineLength(str);
     dif = strlen(str) - len;
-    strncpy(wline, str, ClientWidth(wnd) + dif);
-    if (pad)    {
-        cp = wline+strlen(wline);
-        while (len++ < ClientWidth(wnd)-x)
+    copy_len = ClientWidth(wnd) + dif;
+    if (copy_len > maxw)
+        copy_len = maxw;
+    strncpy(wline, str, copy_len);
+    wline[copy_len] = '\0';
+    if (pad) {
+        cp = wline + strlen(wline);
+        while (len++ < ClientWidth(wnd) - x && (cp - wline) < maxw)
             *cp++ = ' ';
+        *cp = '\0';
     }
     wputs(wnd, wline, x, y);
 }
@@ -459,7 +467,7 @@ void ClearWindow(WINDOW wnd, RECT *rcc, int clrchar)
 		int top = TopBorderAdj(wnd);
 		int bot = WindowHeight(wnd)-1-BottomBorderAdj(wnd);
 
-        if (RectLeft(rc) == 0)
+        if (RectLeft(rc) == 0 && !TestAttribute(wnd, LEFTBORDER))
             RectLeft(rc) = BorderAdj(wnd);
         if (RectRight(rc) > WindowWidth(wnd)-1)
             RectRight(rc) = WindowWidth(wnd)-1;

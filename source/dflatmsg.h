@@ -31,10 +31,6 @@ DFlatMsg(MINIMIZE)           /* minimize the window          */
 DFlatMsg(RESTORE)            /* restore the window           */
 DFlatMsg(INSIDE_WINDOW)      /* test x/y inside a window     */
 DFlatMsg(DEADCHILD)					 /* child's death (DFlat+ 1.0)   */
-/* ---------------- clock messages ------------------------- */
-DFlatMsg(CLOCKTICK)          /* the clock ticked             */
-DFlatMsg(CAPTURE_CLOCK)      /* capture clock into a window  */
-DFlatMsg(RELEASE_CLOCK)      /* release clock to the system  */
 /* -------------- keyboard and screen messages ------------- */
 DFlatMsg(KEYBOARD)           /* key was pressed              */
 DFlatMsg(CAPTURE_KEYBOARD) /* capture keyboard into a window */
@@ -96,8 +92,6 @@ DFlatMsg(INITIATE_DIALOG)    /* begin a dialog               */
 DFlatMsg(ENTERFOCUS)         /* tell DB control got focus    */
 DFlatMsg(LEAVEFOCUS)         /* tell DB control lost focus   */
 DFlatMsg(ENDDIALOG)          /* end a dialog                 */
-/* ---------------- help box messages ---------------------- */
-DFlatMsg(DISPLAY_HELP)
 /* --------------- application window messages ------------- */
 DFlatMsg(ADDSTATUS)
 /* --------------- picture box messages -------------------- */

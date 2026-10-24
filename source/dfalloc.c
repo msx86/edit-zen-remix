@@ -34,6 +34,7 @@ static void AllocationError(void)
         storevideo(rc, savbuf);
 		if (AllocTesting)
 			longjmp(AllocError, 1);
+		exit(1);
 	}
 }
 

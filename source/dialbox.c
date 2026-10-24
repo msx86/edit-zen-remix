@@ -135,11 +135,7 @@ static BOOL KeyboardMsg(WINDOW wnd, PARAM p1, PARAM p2)
         return FALSE;
     switch ((int)p1)    {
         case F1:
-            ct = GetControl(inFocus);
-            if (ct != NULL)
-                if (SystemHelp(wnd, ct->help))
-                    return TRUE;
-            break;
+            return TRUE;
         case SHIFT_HT:
         case BS:
 #ifndef HOOKKEYB
@@ -195,9 +191,7 @@ static BOOL CommandMsg(WINDOW wnd, PARAM p1, PARAM p2)
                 SendMessage(wnd, CLOSE_WINDOW, TRUE, 0);
             return TRUE;
         case ID_HELP:
-            if ((int)p2 != 0)
-                return TRUE;
-            return SystemHelp(wnd, db->HelpName);
+            return TRUE;
         default:
             break;
     }
@@ -581,10 +575,6 @@ static BOOL CtlKeyboardMsg(WINDOW wnd, PARAM p1, PARAM p2)
     CTLWINDOW *ct = GetControl(wnd);
     switch ((int) p1)    {
         case F1:
-            if (WindowMoving || WindowSizing)
-                break;
-            if (!SystemHelp(wnd, ct->help))
-                SendMessage(GetParent(wnd),COMMAND,ID_HELP,0);
             return TRUE;
         case ' ':
             if (!((int)p2 & ALTKEY))

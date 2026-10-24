@@ -11,9 +11,8 @@
 /* G L O B A L S ///////////////////////////////////////////////////////// */
 
 void *mypointer;
-static char FileSpec[15], SrchSpec[15], FileName[15];
+static char FileSpec[MAXPATH], SrchSpec[MAXPATH], FileName[MAXPATH];
 extern DBOX FileOpen, SaveAs;
-extern DBOX Display;
 #ifdef INCLUDE_MULTI_WINDOWS
 extern DBOX Windows;
 #endif
@@ -37,7 +36,6 @@ BOOL BuildFileList(WINDOW, char *);
 void BuildDirectoryList(WINDOW);
 void BuildDriveList(WINDOW);
 void BuildPathDisplay(WINDOW);
-void SelectColors( void );
 
 /* F U N C T I O N S ///////////////////////////////////////////////////// */
 
@@ -57,8 +55,10 @@ static BOOL DlgFileOpen(char *Fspec, char *Sspec, char *Fname, DBOX *db)
 {
     BOOL rtn;
 
-    strncpy(FileSpec, Fspec, 15);
-    strncpy(SrchSpec, Sspec, 15);
+    strncpy(FileSpec, Fspec, sizeof(FileSpec) - 1);
+    FileSpec[sizeof(FileSpec) - 1] = 0;
+    strncpy(SrchSpec, Sspec, sizeof(SrchSpec) - 1);
+    SrchSpec[sizeof(SrchSpec) - 1] = 0;
     if ((rtn = DialogBox(NULL, db, TRUE, DlgFnOpen)) != FALSE)
         strcpy(Fname, FileName);
 
@@ -154,7 +154,7 @@ static int DlgFnOpen(WINDOW wnd,MESSAGE msg,PARAM p1,PARAM p2)
                     	case LB_CHOOSE:
                             {
                             /* Choose dir */
-                            char dd[15];
+                            char dd[MAXPATH];
 
                             GetDlgListText(wnd, dd, ID_DIRECTORY);
                             chdir(dd);
@@ -178,7 +178,7 @@ static int DlgFnOpen(WINDOW wnd,MESSAGE msg,PARAM p1,PARAM p2)
                     	case LB_CHOOSE:
                             {
                             /* Choose dir */
-                            char dr[15];
+                            char dr[MAXPATH];
                             disk = getdisk();
                             GetDlgListText(wnd, dr, ID_DRIVE);
                             /* *** 0.6e: string has form "[-X-]" *** */
@@ -318,139 +318,6 @@ void AboutBox ( MODULE m, BOOL BasedOnDFlat )
 
       MessageBox(AboutStr, aboutMsg);
 }
-
-void ProgramAboutBox ( void )
-{
-		AboutBox ( ProgramModule, TRUE );
-}
-
-void DFlatpAboutBox ( void )
-{
-		AboutBox ( DFlatpModule, FALSE );
-}
-
-
-void CustomizeDisplayPropBox ( void )
-{
-       	int i;
-       	CTLWINDOW *ct, *ct1;
-       	ct = FindCommand(&Display, ID_SNOWY, CHECKBOX);
-    	if (!isVGA())    {
-        	/* ---- modify Display Dialog Box for EGA, CGA ---- */
-        	if (isEGA())
-            	ct1 = FindCommand(&Display,ID_50LINES,RADIOBUTTON);
-        	else    {
-            	CTLWINDOW *ct2;
-            	ct2 = FindCommand(&Display,ID_COLOR,RADIOBUTTON)-1;
-				if (ct2)	{
-	            	ct2->dwnd.w++;
-    	        	for (i = 0; i < 7; i++)
-        	        	(ct2+i)->dwnd.x += 8;
-				}
-            	ct1 = FindCommand(&Display,ID_25LINES,RADIOBUTTON)-1;
-        	}
-			if (ct && ct1)
-	        	for (i = 0; i < 6; i++)
-    	        	*ct1++ = *ct++;
-		}
-    	if (isVGA() || isEGA())    {
-			/* ------ eliminate the snowy check box ----- */
-	       	ct = FindCommand(&Display, ID_SNOWY, CHECKBOX);
-			if (ct != NULL)
-				for (i = 0; i < 4; i++)
-					*(ct+i) = *(ct+2+i);
-		}
-}
-
-
-/* Display Properties Box */
-void DisplayProperties ( WINDOW wnd )
-{
-	
-	VideoResolution newVideoResolution;
-	
-	#ifdef INCLUDE_WINDOWOPTIONS
-    if (cfg.Border)
-        SetCheckBox(&Display, ID_BORDER);
-    if (cfg.Title)
-        SetCheckBox(&Display, ID_TITLE);
-    if (cfg.StatusBar)
-        SetCheckBox(&Display, ID_STATUSBAR);
-    if (cfg.Texture)
-        SetCheckBox(&Display, ID_TEXTURE);
-#endif
-
-		/* Prepare the dialog box items */
-
-	  switch (SysConfig.VideoCurrentColorScheme.index)   {
-	  	case 1: PushRadioButton(&Display, ID_MONO); break;
-	  	case 2: PushRadioButton(&Display, ID_REVERSE); break;
-	  	default: PushRadioButton(&Display, ID_COLOR);
-	  }
-
-    switch (SCREENHEIGHT)  {
-    		case 43: PushRadioButton(&Display, ID_43LINES); break;
-    		case 50: PushRadioButton(&Display, ID_50LINES); break;
-    		default: PushRadioButton(&Display, ID_25LINES);
-    }
-    
-		if ( GetSnowyFlag() )
-        SetCheckBox(&Display, ID_SNOWY);
-
-		/* Execute the dialog box */
-
-    if (DialogBox(wnd, &Display, TRUE, NULL))     {
-
-				if (inFocus == wnd->MenuBarWnd || inFocus == wnd->StatusBar)
-					oldFocus = ApplicationWindow;
-				else 
-					oldFocus = inFocus;
-
-        SendMessage(wnd, HIDE_WINDOW, 0, 0);
-
-				newVideoResolution = TXT25;
-        if (isEGA() || isVGA())    {
-             if (RadioButtonSetting(&Display, ID_43LINES))
-                 newVideoResolution = TXT43;
-             else if (RadioButtonSetting(&Display, ID_50LINES))
-                 newVideoResolution = TXT50;
-        }
-
-        SelectLines(newVideoResolution);
-        SelectColors();
-
-#ifdef INCLUDE_WINDOWOPTIONS
-                SelectBorder(wnd);
-                SelectTitle(wnd);
-                SelectStatusBar(wnd);
-                SelectTexture();
-#endif
-
-        CreateMenu(wnd);
-        CreateStatusBar(wnd);
-        SendMessage(wnd, SHOW_WINDOW, 0, 0);
-		    SendMessage(oldFocus, SETFOCUS, TRUE, 0);
-    }
-}
-
-/* ----- set up colors for the application window ------ */
-void SelectColors( void )
-{
-  	get_videomode();
-    if (ismono() && !isEGA() && !isVGA())     /* -------- CGA --------- */
-       SetSnowyFlag (CheckBoxSetting(&Display, ID_SNOWY));
-
-    if (RadioButtonSetting(&Display, ID_MONO))
-        SelectColorScheme (bw);
-    else if (RadioButtonSetting(&Display, ID_REVERSE))
-        SelectColorScheme (reverse);
-    else if (ismono() || video_mode == 2)
-        SelectColorScheme (bw);
-		else
-        SelectColorScheme (color);
-
-}
-
 
 
 /* window processing module for the More Windows dialog box */

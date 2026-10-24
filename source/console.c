@@ -45,36 +45,12 @@ void SwapCursorStack(void)
 /* ---- BIOS keyboard routines with 84 and 102 key keyboard support ---- */
 /* (EDIT 0.7 -ea) */
 
-#ifdef __TURBOC__
-#define ZFlag(regs) ( regs.x.flags & 0x40 )
-
-unsigned Xbioskey(int cmd)
-{
-    static int keybase = -1;
-    union REGS kregs;
-    if (keybase < 0) {
-        volatile char far *kbtype = MK_FP(0x40,0x96); /* BIOS data flag */
-        keybase = ( ((*kbtype) & 0x10) != 0 ) ? 0x10 : 0;
-        /* 0 for 84 key XT mode, 0x10 for 102 key AT mode. */
-        /* (0x20 for 122 key mode, which is not used here) */
-    }
-    kregs.h.ah = (char) (keybase + cmd);
-    kregs.h.al = 0;
-    int86(0x16, &kregs, &kregs);
-
-    if ( (cmd == 1) && ZFlag (kregs) )
-        return 0;
-
-    return kregs.x.ax;
-}
-#endif
-
-#ifdef __WATCOMC__
 unsigned Xbioskey(int cmd)
 {
     union REGPACK r;
     char kbdtype = *(unsigned char __far *)MK_FP(0x40,0x96) & 0x10;
 
+    memset(&r, 0, sizeof(r));
     r.h.ah = (char) (kbdtype + cmd);
     r.h.al = 0;
     intr(0x16, &r);
@@ -87,7 +63,6 @@ unsigned Xbioskey(int cmd)
         return r.w.ax;
     }
 }
-#endif
 
 
 /* ---- Test for keystroke ---- */
@@ -172,13 +147,12 @@ unsigned getshift(void)
     }
 }
 
-static int far *clk = MK_FP(0x40,0x6c);
 /* ------- macro to wait one clock tick -------- */
 #define wait()          \
 {                       \
-    volatile int now = *clk;     \
-    while (now == *clk) \
-        ;               \
+    volatile int now = peek(0x40, 0x6c); \
+    while (now == peek(0x40, 0x6c))      \
+        ;                                \
 }
 
 /* -------- sound a buzz tone, using hardware directly ---------- */
@@ -193,6 +167,8 @@ void beep(void)
     outp(0x61, inp(0x61) & ~3);     /* stop the sound  */
 }
 
+static BOOL video_cached = FALSE;
+
 /* -------- get the video mode and page from BIOS -------- */
 void videomode(void)
 {
@@ -202,12 +178,14 @@ void videomode(void)
     video_page = regs.x.bx;
     video_page &= 0xff00;
     video_mode &= 0x7f;
+    video_cached = TRUE;
 }
 
 /* ------ position the cursor ------ */
 void cursor(int x, int y)
 {
-    videomode();
+    if (!video_cached)
+        videomode();
     if (y >= SCREENHEIGHT) y = SCREENHEIGHT - 1; /* 0.7c */
     regs.x.dx = ((y << 8) & 0xff00) + x;
     regs.h.ah = SETCURSOR;
@@ -218,7 +196,8 @@ void cursor(int x, int y)
 /* ------ get cursor shape and position ------ */
 static void near getcursor(void)
 {
-    videomode();
+    if (!video_cached)
+        videomode();
     regs.h.ah = READCURSOR;
     regs.x.bx = video_page;
     int86(VIDEO, &regs, &regs);
@@ -248,7 +227,8 @@ void restorecursor(void)
 {
     if (cs)    {
         --cs;
-        videomode();
+        if (!video_cached)
+            videomode();
         regs.x.dx = cursorpos[cs];
         if (regs.h.dh >= SCREENHEIGHT)
             regs.h.dh = SCREENHEIGHT - 1;	/* 0.7c */
@@ -286,22 +266,12 @@ void unhidecursor(void)
 /* ---- use BIOS to set the cursor type ---- */
 void set_cursor_type(unsigned t)
 {
-    videomode();
+    if (!video_cached)
+        videomode();
     regs.h.ah = SETCURSORTYPE;
     regs.x.bx = video_page;
     regs.x.cx = t;
     int86(VIDEO, &regs, &regs);
-}
-
-/* ---- test for EGA -------- */
-BOOL isEGA(void)
-{
-    if (isVGA())
-        return FALSE;
-    regs.h.ah = 0x12;
-    regs.h.bl = 0x10;
-    int86(VIDEO, &regs, &regs);
-    return regs.h.bl != 0x10;
 }
 
 /* ---- test for VGA -------- */
@@ -312,17 +282,6 @@ BOOL isVGA(void)
     return regs.h.al == 0x1a && regs.h.bl > 6;
 }
 
-static void Scan350(void)
-{
-    regs.x.ax = 0x1201;
-    regs.h.bl = 0x30;
-    int86(VIDEO, &regs, &regs);
-	regs.h.ah = 0x0f;
-    int86(VIDEO, &regs, &regs);
-	regs.h.ah = 0x00;
-    int86(VIDEO, &regs, &regs);
-}
-
 static void Scan400(void)
 {
     regs.x.ax = 0x1202;
@@ -330,6 +289,7 @@ static void Scan400(void)
     int86(VIDEO, &regs, &regs);
 	regs.h.ah = 0x0f;
     int86(VIDEO, &regs, &regs);
+    regs.h.al |= 0x80;
 	regs.h.ah = 0x00;
     int86(VIDEO, &regs, &regs);
 }
@@ -337,32 +297,15 @@ static void Scan400(void)
 /* ---------- set 25 line mode ------- */
 void Set25(void)
 {
+    unsigned char rows = *(unsigned char __far *)MK_FP(0x40, 0x84);
+    if (rows == 24 || rows == 0)
+        return;
     if (isVGA())	{
         Scan400();
 		regs.x.ax = 0x1114;
 	}
 	else
 		regs.x.ax = 0x1111;
-    regs.h.bl = 0;
-    int86(VIDEO, &regs, &regs);
-}
-
-/* ---------- set 43 line mode ------- */
-void Set43(void)
-{
-    if (isVGA())
-        Scan350();
-    regs.x.ax = 0x1112;
-    regs.h.bl = 0;
-    int86(VIDEO, &regs, &regs);
-}
-
-/* ---------- set 50 line mode ------- */
-void Set50(void)
-{
-    if (isVGA())
-        Scan400();
-    regs.x.ax = 0x1112;
     regs.h.bl = 0;
     int86(VIDEO, &regs, &regs);
 }

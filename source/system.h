@@ -47,8 +47,8 @@ RECT subRectangle(RECT, RECT);
 #define COUNT (1193280L / FREQUENCY)
 #define ZEROFLAG 0x40
 #define MAXSAVES 50
-#define SCREENWIDTH  (peekb(0x40,0x4a) & 255)
-#define SCREENHEIGHT (isVGA() || isEGA() ? peekb(0x40,0x84)+1 : 25)
+#define SCREENWIDTH  80
+#define SCREENHEIGHT 25
 #define clearBIOSbuffer() *(int far *)(MK_FP(0x40,0x1a)) = \
 		        	      *(int far *)(MK_FP(0x40,0x1c));
 
@@ -63,11 +63,6 @@ RECT subRectangle(RECT, RECT);
 #define READATTRCHAR  8
 #define WRITEATTRCHAR 9
 #define HIDECURSOR 0x20
-
-/* ------- the interrupt function registers -------- */
-typedef struct {
-    int bp,di,si,ds,es,dx,cx,bx,ax,ip,cs,fl;
-} IREGS;
 
 /* ---------- keyboard prototypes -------- */
 int AltConvert(int);
@@ -124,11 +119,8 @@ void set_mousetravel(int, int, int, int);
 
 
 /* ----------- video adaptor prototypes ----------- */
-BOOL isEGA(void);
 BOOL isVGA(void);
 void Set25(void);
-void Set43(void);
-void Set50(void);
 
 #ifndef BLACK
 /* ============= Color Macros ============ */

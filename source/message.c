@@ -2,8 +2,6 @@
 
 #include "dfpcomp.h"
 
-#define BLINKING_CLOCK 0	/* set to 1 to make the clock blink */
-		/* blinking is off by default since 0.7c */
 /* other defines: HOOKTIMER (use obsolete int 8 handler) and of course */
 /* HOOKKEYB (use int 9 handler to allow ctrl/alt/shift - ins/del/bs)   */
 
@@ -62,25 +60,19 @@ static BOOL NoChildCaptureKeyboard;
 #ifdef HOOKTIMER /* if IRQ used, timer variables are really used */
 static int doubletimer = -1;
 static int delaytimer  = -1;
-static int clocktimer  = -1;
 #else 		/* else, variables only contain an array index! */
 
 static int doubletimer = 0;
 static int delaytimer  = 1;
-static int clocktimer  = 2;
-static char timerused[3] = {0, 0, 0}; /* 0 means off, 2 timed out */
+static char timerused[2] = {0, 0}; /* 0 means off, 2 timed out */
 			/* 1 counting */
-static long unsigned int timerend[3] = {0, 0, 0};
-static long unsigned int timerstart[3] = {0, 0, 0};
+static long unsigned int timerend[2] = {0, 0};
+static long unsigned int timerstart[2] = {0, 0};
 //volatile long unsigned int *biostimer = MK_FP(0x40,0x6c);
-volatile long unsigned int far *biostimer = MK_FP(0x40,0x6c);
+volatile long unsigned int far *biostimer;
 			/* just using BIOS DATA "timer tick count" */
 
 #endif
-
-char time_string[] = "           "; /* max. length "12:34:56pm "; */
-
-static WINDOW Cwnd;
 
 #ifdef HOOKKEYB
 static void interrupt far newkeyboard(void)
@@ -98,8 +90,6 @@ static void interrupt far newtimer(void)
         countdown(doubletimer);
     if (timer_running(delaytimer))
         countdown(delaytimer);
-    if (timer_running(clocktimer))
-        countdown(clocktimer);
     oldtimer();
 }
 #else
@@ -203,7 +193,6 @@ int TestCriticalError(void)
 /* AH bit 7 set. Also has special stack contents...                */
 /* returns action code in AL: 0 ignore 1 retry 2 abort (3 fail)    */
 
-#ifdef __WATCOMC__
 static void interrupt far newcrit(union INTPACK r);
 
 static void interrupt far newcrit(union INTPACK r)
@@ -215,21 +204,6 @@ static void interrupt far newcrit(union INTPACK r)
     }
     r.w.ax = 3; /* make operation fail! */
 }
-#endif
-
-#ifdef __TURBOC__
-static void interrupt far newcrit(IREGS ir);
-
-static void interrupt far newcrit(IREGS ir)
-{
-    if (!(ir.ax & 0x8000))     { /* if any drive affected... */
-        ermsg[sizeof(ermsg) - 2] =
-           (ir.ax & 0xff) + 'A'; /* ... patch drive letter into message */
-        CriticalError = TRUE;    /* ... only then we have a crit. error */
-    }
-    ir.ax = 3; /* make operation fail! */
-}
-#endif
 
 #else
 
@@ -272,6 +246,34 @@ void at_exit(void)
    }
 #endif
 }
+
+#ifdef USECBRKHNLDR
+static void (__interrupt __far *old_ctrl_break_vect)(void) = NULL;
+static int (*c_break_handler)(void) = NULL;
+
+static void __interrupt __far hentry(void)
+{
+    if (c_break_handler) {
+        if (!c_break_handler())
+            _exit(0);
+    }
+}
+
+static void SetControlBreakHandler(int (*fptr)(void))
+{
+    c_break_handler = fptr;
+    old_ctrl_break_vect = _dos_getvect(0x23);
+    _dos_setvect(0x23, hentry);
+}
+
+static void RestoreControlBreakHandler(void)
+{
+    if (old_ctrl_break_vect) {
+        _dos_setvect(0x23, old_ctrl_break_vect);
+        old_ctrl_break_vect = NULL;
+    }
+}
+#endif
 
 static void StopMsg(void)
 {
@@ -340,6 +342,9 @@ BOOL init_messages(void)
     NoChildCaptureMouse = FALSE;
     NoChildCaptureKeyboard = FALSE;
     MsgQueueOnCtr = MsgQueueOffCtr = MsgQueueCtr = 0;
+#ifndef HOOKTIMER
+    biostimer = MK_FP(0x40, 0x6c);
+#endif
     EventQueueOnCtr = EventQueueOffCtr = EventQueueCtr = 0;
 
 #ifdef HOOKTIMER
@@ -392,52 +397,11 @@ static void PostEvent(MESSAGE event, int p1, int p2)
     }
 }
 
-/* ------ collect mouse, clock, and keyboard events ----- */
+/* ------ collect mouse and keyboard events ----- */
 static void near collect_events(void)
 {
     static int ShiftKeys = 0;
-    static int last_sec = -1;
 	int sk;
-    struct tm *now;
-#if BLINKING_CLOCK
-    static BOOL flipflop = FALSE;
-#endif
-    int hr;
-
-    /* -------- test for a clock event (one/second) ------- */
-//    if (timed_out(clocktimer))    {
-        time_t t = time(NULL);	/* the current time */
-        char timesep = SysConfig.CountryTimeSeparator;	/* default 12:12:12am separator */
-        int ampmflag = 0;   /* 1 ampm 0 24h clock */
-//        }
-#if BLINKING_CLOCK
-        /* ------- blink the ':'s at one-second intervals ----- */
-        flipflop = (!flipflop);
-        if (flipflop) timesep = (timesep == ':') ? '.' : ' ';
-            /* new in EDIT 0.7b: toggle ':' / '.' (or [other] / ' ') */
-            /* which looks less 'nervous' than ':' / space toggling. */
-#endif
-        /* ----- get the current time ----- */
-        now = localtime(&t);
-        if ( now->tm_sec != last_sec ) {
-            hr = now->tm_hour;
-            if (ampmflag && (hr > 12)) hr -= 12;
-            if (ampmflag && (hr == 0)) hr  = 12;
-            if (ampmflag) {
-              sprintf(time_string, "%2d%c%02d%c%02d%s", hr, timesep, now->tm_min,
-                timesep, now->tm_sec,
-                ((now->tm_hour > 11) ? "pm " : "am ") );
-            } else
-              sprintf(time_string, " %2d%c%02d%c%02d  ", hr, timesep, now->tm_min,
-                timesep, now->tm_sec);
-                /* min / sec use 02 digits, only 0.6 had 2 digits ' ' padded hours */
-            /* -------- reset the timer -------- */
-            /*set_timer(clocktimer, 1);*/
-            /* -------- post the clock event -------- */
-            PostEvent(CLOCKTICK, FP_SEG(time_string), FP_OFF(time_string));
-            last_sec = now->tm_sec;
-        }
-//    }
 
     /* --------- keyboard events ---------- */
     if ((sk = getshift()) != ShiftKeys)    {
@@ -594,7 +558,9 @@ int SendMessage(WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2)
             case SHIFT_CHANGED:
                 /* ------- don't send these messages unless the
                     window is visible or has captured the keyboard -- */
-                if (!(isVisible(wnd) || wnd == CaptureKeyboard))
+                if (ZenMode && wnd != NULL && GetClass(wnd) == MENUBAR)
+                    ;
+                else if (!(isVisible(wnd) || wnd == CaptureKeyboard))
 	                break;
             default:
                 rtn = (*wnd->wndproc)(wnd, msg, p1, p2);
@@ -608,18 +574,6 @@ int SendMessage(WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2)
         switch (msg)    {
             case STOP:
 				StopMsg();
-                break;
-            /* ------- clock messages --------- */
-            case CAPTURE_CLOCK:
-				if (Cwnd == NULL)
-	                set_timer(clocktimer, 0);
-				wnd->PrevClock = Cwnd;
-                Cwnd = wnd;
-                break;
-            case RELEASE_CLOCK:
-                Cwnd = wnd->PrevClock;
-				if (Cwnd == NULL)
-	                disable_timer(clocktimer);
                 break;
             /* -------- keyboard messages ------- */
             case KEYBOARD_CURSOR:
@@ -835,12 +789,13 @@ BOOL dispatch_message(void)
     collect_events();
 
     /* only message.c can fill the event queue, but all components */
-    /* can fill the message queue. Events come from user or clock. */
+    /* can fill the message queue. Events come from user. */
     if ( (EventQueueCtr == 0) && (MsgQueueCtr == 0) &&
         (handshaking == 0) ) {	/* BORED - new 0.7c */
         union REGPACK r;
 #if 1				/* int 2f is often quite crowded */
         if (!no_multiplex_int) {
+            memset(&r, 0, sizeof(r));
             r.w.ax = 0x1680;    /* release multitasker timeslice */
             intr(0x2f, &r); /* multiplexer call */
             no_multiplex_int = r.h.al;
@@ -902,10 +857,6 @@ BOOL dispatch_message(void)
 		        Mwnd = MouseWindow(ev.mx, ev.my);
                 SendMessage(Mwnd, ev.event, ev.mx, ev.my);
                 break;
-            case CLOCKTICK:
-                SendMessage(Cwnd, ev.event,
-                    (PARAM) MK_FP(ev.mx, ev.my), 0);
-				break;
             default:
                 break;
         }

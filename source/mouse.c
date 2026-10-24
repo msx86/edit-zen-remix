@@ -1,10 +1,8 @@
 /* ------------- mouse.c ------------- */
 
-//#include "dflat.h"
 #include "dfpcomp.h"
 
 static union REGS regs;
-static struct SREGS sregs;
 
 int ui_update = 0;
 
@@ -14,30 +12,28 @@ static void near mouse(int m1,int m2,int m3,int m4)
     regs.x.cx = m3;
     regs.x.bx = m2;
     regs.x.ax = m1;
-    int86x(MOUSE, &regs, &regs, &sregs);
+    int86(MOUSE, &regs, &regs);
 }
+
+static BOOL mouse_present = FALSE;
 
 /* ---------- reset the mouse ---------- */
 void resetmouse(void)
 {
-	int x, y;
-	segread(&sregs);
     mouse(0,0,0,0);
+    mouse_present = (regs.x.ax != 0);
 }
 
 /* ----- test to see if the mouse driver is installed ----- */
 BOOL mouse_installed(void)
 {
-    unsigned char far *ms;
-    ms = MK_FP(peek(0, MOUSE*4+2), peek(0, MOUSE*4));
-    return (SCREENWIDTH <= 80 && ms != NULL && *ms != 0xcf);
+    return mouse_present;
 }
 
 /* ------ return true if mouse buttons are pressed ------- */
 int mousebuttons(void)
 {
     if (mouse_installed())	{
-		segread(&sregs);
         mouse(3,0,0,0);
 	    return regs.x.bx & 3;
 	}
@@ -49,12 +45,9 @@ void get_mouseposition(int *x, int *y)
 {
 	*x = *y = -1;
     if (mouse_installed())    {
-		segread(&sregs);
         mouse(3,0,0,0);
         *x = regs.x.cx/8;
         *y = regs.x.dx/8;
-		if (SCREENWIDTH == 40)
-			*x /= 2;
     }
 }
 
@@ -62,9 +55,6 @@ void get_mouseposition(int *x, int *y)
 void set_mouseposition(int x, int y)
 {
     if (mouse_installed() && !ui_update)	{
-		segread(&sregs);
-		if (SCREENWIDTH == 40)
-			x *= 2;
         mouse(4,0,x*8,y*8);
 	}
 }
@@ -74,7 +64,6 @@ void show_mousecursor(void)
 {
     if (mouse_installed())	{
     	if (!ui_update) {
-			segread(&sregs);
     	    mouse(1,0,0,0);
     	}
 	}
@@ -84,7 +73,6 @@ void show_mousecursor(void)
 void hide_mousecursor(void)
 {
     if (mouse_installed() && !ui_update)	{
-		segread(&sregs);
     	mouse(2,0,0,0);
 	}
 }
@@ -97,7 +85,7 @@ void hide_mousecursor_in_rect(RECT rc)
     	regs.x.dx = rc.tp*8;
     	regs.x.si = rc.rt*8+7;
     	regs.x.di = rc.bt*8+7;
-    	int86x(MOUSE, &regs, &regs, &sregs);
+    	int86(MOUSE, &regs, &regs);
 	}
 }
 
@@ -105,7 +93,6 @@ void hide_mousecursor_in_rect(RECT rc)
 int button_releases(void)
 {
     if (mouse_installed())	{
-		segread(&sregs);
         mouse(6,0,0,0);
 	    return regs.x.bx;
 	}
@@ -116,13 +103,7 @@ int button_releases(void)
 void set_mousetravel(int minx, int maxx, int miny, int maxy)
 {
     if (mouse_installed())	{
-		if (SCREENWIDTH == 40)	{
-			minx *= 2;
-			maxx *= 2;
-		}
-		segread(&sregs);
         mouse(7, 0, minx*8, maxx*8);
 		mouse(8, 0, miny*8, maxy*8);
 	}
 }
-

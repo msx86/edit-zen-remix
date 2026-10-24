@@ -76,19 +76,33 @@ static void PaintMsg(WINDOW wnd)
         char *sel, *cp;
         int offset, offset1;
 
+        int start_off, end_off, xpos;
+        char saved_char;
+
         sel = DFmalloc(200);
         offset=menu[ActiveMenuBar->ActiveSelection].x1;
         offset1=menu[ActiveMenuBar->ActiveSelection].x2;
-        GetText(wnd)[offset1] = '\0';
+
+        start_off = (offset > 0) ? offset - 1 : 0;
+        end_off = offset1 + 1;
+        if (end_off >= (int)strlen(GetText(wnd)))
+            end_off = strlen(GetText(wnd)) - 1;
+        xpos = offset - ActiveMenuBar->ActiveSelection*4;
+        if (offset > 0)
+            xpos--;
+        if (xpos < 0)
+            xpos = 0;
+
+        saved_char = GetText(wnd)[end_off];
+        GetText(wnd)[end_off] = '\0';
         SetReverseColor(wnd);
         memset(sel, '\0', 200);
-        strcpy(sel, GetText(wnd)+offset);
+        strcpy(sel, GetText(wnd)+start_off);
         cp = strchr(sel, CHANGECOLOR);
         if (cp != NULL)
             *(cp + 2) = background | 0x80;
-        wputs(wnd, sel,
-            offset-ActiveMenuBar->ActiveSelection*4, 0);
-        GetText(wnd)[offset1] = ' ';
+        wputs(wnd, sel, xpos, 0);
+        GetText(wnd)[end_off] = saved_char;
         if (mwnd == NULL && wnd == inFocus) {
             char *st = ActiveMenu
                 [ActiveMenuBar->ActiveSelection].StatusText;
@@ -115,6 +129,15 @@ static void KeyboardMsg(WINDOW wnd, PARAM p1)
         for (j = 0; j < mctr; j++)    {
             if ((inFocus == wnd && menu[j].sc == c) ||
                     (a && menu[j].sc == a))    {
+                if (ZenMode && HasOpenEditor()) {
+                    SetVisible(wnd);
+                    if (GetParent(wnd)->StatusBar != NULL) {
+                        SetVisible(GetParent(wnd)->StatusBar);
+                        ReFocus(GetParent(wnd)->StatusBar);
+                        SendMessage(GetParent(wnd)->StatusBar, PAINT, 0, 0);
+                    }
+                    ReFocus(wnd);
+                }
 				SendMessage(wnd, SETFOCUS, TRUE, 0);
                 SendMessage(wnd, MB_SELECTION, j, 0);
                 return;
@@ -153,21 +176,8 @@ static void KeyboardMsg(WINDOW wnd, PARAM p1)
         mnu++;	/* search through all possible popdowns */
     }
     switch ((int)p1)    {
-        case F1: /* help inside menubar - possible context sensitive */
-            if (ActiveMenu == NULL || ActiveMenuBar == NULL)
-				break;
-			sel = ActiveMenuBar->ActiveSelection;
-			if (sel == -1)	{
-	    		BaseWndProc(MENUBAR, wnd, KEYBOARD, F1, 0);
-				return;
-			}
-			mnu = ActiveMenu+sel;
-			if (mwnd == NULL ||
-					mnu->Selections[0].SelectionTitle == NULL) {
-               	SystemHelp(wnd,mnu->Title);
-            	return;
-			}
-            break;
+        case F1:
+            return;
         case DN:	/* suggested by Fox: down arrow to open sub-menu (0.7b) */
         case '\r':
             if (mwnd == NULL &&
@@ -177,6 +187,15 @@ static void KeyboardMsg(WINDOW wnd, PARAM p1)
             break;
         case F10: /* F10, as ALT, toggles menu bar activation */
             if (wnd != inFocus && mwnd == NULL)    {
+                if (ZenMode && HasOpenEditor()) {
+                    SetVisible(wnd);
+                    if (GetParent(wnd)->StatusBar != NULL) {
+                        SetVisible(GetParent(wnd)->StatusBar);
+                        ReFocus(GetParent(wnd)->StatusBar);
+                        SendMessage(GetParent(wnd)->StatusBar, PAINT, 0, 0);
+                    }
+                    ReFocus(wnd);
+                }
                 SendMessage(wnd, SETFOCUS, TRUE, 0);
 			    if ( ActiveMenuBar->ActiveSelection == -1)
 			        ActiveMenuBar->ActiveSelection = 0;
@@ -231,8 +250,8 @@ static void LeftButtonMsg(WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2)
     
     		/* --- compute the selection that the left button hit --- */
     		for (i = 0; i < mctr; i++)
-        		if (mx >= menu[i].x1-4*i &&
-                mx <= menu[i].x2-4*i-5)
+        		if (mx >= menu[i].x1-4*i-1 &&
+                mx <= menu[i].x2-4*i-4)
             		break;
     		if (i < mctr)  {
         		if (i != ActiveMenuBar->ActiveSelection || mwnd == NULL)
@@ -241,7 +260,7 @@ static void LeftButtonMsg(WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2)
         }
       }
       PostMessage (GetParent (wnd), msg, p1, p2);
-      SendMessage (wnd, CLOSE_POPDOWN, FALSE, 0);
+      SendMessage (wnd, CLOSE_POPDOWN, ZenMode ? TRUE : FALSE, 0);
 }
 
 /* -------------- MB_SELECTION Message -------------- */
@@ -252,7 +271,8 @@ static void SelectionMsg(WINDOW wnd, PARAM p1)
     MENU *mnu= ActiveMenu+(int)p1;
 
 		/* Disable current pop-down (if any) and selection */
-		SendMessage (wnd, CLOSE_POPDOWN, FALSE, 0);
+		if (mwnd != NULL)
+			SendMessage (wnd, CLOSE_POPDOWN, FALSE, 0);
 
 		/* Prepare creation of pop-down */
     if (mnu->PrepMenu != NULL)
@@ -260,8 +280,11 @@ static void SelectionMsg(WINDOW wnd, PARAM p1)
 
     wd = MenuWidth(mnu->Selections);
 
+    offset -= 2;
     if (offset > WindowWidth(wnd)-wd)
         offset = WindowWidth(wnd)-wd;
+    if (offset < 0)
+        offset = 0;
 
 		/* Create and activate pop-down */
     mwnd = CreateWindow(POPDOWNMENU, NULL,
@@ -288,10 +311,6 @@ static void SelectionMsg(WINDOW wnd, PARAM p1)
 /* --------- COMMAND Message ---------- */
 static void CommandMsg(WINDOW wnd, PARAM p1, PARAM p2)
 {
-	if (p1 == ID_HELP)	{
-    	BaseWndProc(MENUBAR, wnd, COMMAND, p1, p2);
-		  return;
-	}
 	SendMessage(wnd, CLOSE_POPDOWN, TRUE,0);
   
   PostMessage(GetParent(wnd), COMMAND, p1, p2);
@@ -300,17 +319,22 @@ static void CommandMsg(WINDOW wnd, PARAM p1, PARAM p2)
 /* --------------- CLOSE_POPDOWN Message --------------- */
 static void ClosePopdownMsg(WINDOW wnd, PARAM p1)
 {
-		if (mwnd == NULL)
-			p1 = TRUE;
-			
     if (mwnd != NULL)
 			 SendMessage (mwnd, CLOSE_WINDOW,0,0);
 
 		if ( p1 )
 		{
+        WINDOW dwnd = GetDocFocus();
         ActiveMenuBar->ActiveSelection = -1;
-        SendMessage(GetDocFocus(), SETFOCUS, TRUE, 0);
+        SendMessage(dwnd, SETFOCUS, TRUE, 0);
         SendMessage(wnd, PAINT, 0, 0);
+        if (ZenMode && HasOpenEditor()) {
+            ClearVisible(wnd);
+            if (GetParent(wnd)->StatusBar != NULL)
+                ClearVisible(GetParent(wnd)->StatusBar);
+            SendMessage(dwnd, PAINT, 0, 0);
+            SendMessage(dwnd, KEYBOARD_CURSOR, dwnd->CurrCol - dwnd->wleft, dwnd->WndRow);
+        }
     }
 
 }
@@ -360,8 +384,8 @@ int MenuBarProc(WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2)
 					  		int i;
     						int mx = (int) p1 - GetLeft(wnd);
     						for (i = 0; i < mctr; i++)
-        					if (mx >= menu[i].x1-4*i &&
-                			mx <= menu[i].x2-4*i-5)
+        					if (mx >= menu[i].x1-4*i-1 &&
+                			mx <= menu[i].x2-4*i-4)
             			break;
 
     						if ( (i < mctr) && (p2 == GetTop (wnd)) && (i != ActiveMenuBar->ActiveSelection))  {

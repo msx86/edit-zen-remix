@@ -5,14 +5,10 @@
 BOOL ClipString;
 
 static unsigned video_address;
-static int near vpeek(int far *vp);
-static void near vpoke(int far *vp, int c);
 void movefromscreen(void far *bf, int offset, int len);
 void movetoscreen(void far *bf, int offset, int len);
 
 VideoResolution  TXT25 = {80, 25, FALSE, "PC Standard 80x25 text mode"};
-VideoResolution  TXT43 = {80, 43, FALSE, "EGA/VGA 80x43 text mode"};
-VideoResolution  TXT50 = {80, 50, FALSE, "EGA/VGA 80x50 text mode"};
 
 /* -- read a rectangle of video memory into a save buffer -- */
 void getvideo(RECT rc, void far *bf)
@@ -51,10 +47,10 @@ unsigned int GetVideoChar(int x, int y)
 {
     int c;
 
-	if (SysConfig.VideoSnowyFlag)
-	    c = vpeek(MK_FP(video_address, vad(x,y)));
-	else
-	    c = peek(video_address, vad(x,y));
+    if (x < 0 || y < 0 || x >= SCREENWIDTH || y >= SCREENHEIGHT)
+        return ' ';
+
+    c = peek(video_address, vad(x,y));
 
     return c;
 }
@@ -62,11 +58,8 @@ unsigned int GetVideoChar(int x, int y)
 /* -------- write a character of video memory ------- */
 void PutVideoChar(int x, int y, int c)
 {
-    if (x < SCREENWIDTH && y < SCREENHEIGHT)    {
-		if (SysConfig.VideoSnowyFlag)
-	        vpoke(MK_FP(video_address, vad(x,y)), c);
-		else
-	        poke(video_address, vad(x,y), c);
+    if (x >= 0 && y >= 0 && x < SCREENWIDTH && y < SCREENHEIGHT)    {
+        poke(video_address, vad(x,y), c);
     }
 }
 
@@ -110,7 +103,7 @@ BOOL CharInView(WINDOW wnd, int x, int y)
 		}
 		nwnd = NextWindow(nwnd);
 	}
-    return (x1 < SCREENWIDTH && y1 < SCREENHEIGHT);
+    return (x1 >= 0 && y1 >= 0 && x1 < SCREENWIDTH && y1 < SCREENHEIGHT);
 }
 
 /* -------- write a character to a window ------- */
@@ -121,10 +114,7 @@ void wputch(WINDOW wnd, int c, int x, int y)
 		int xc = GetLeft(wnd)+x;
 		int yc = GetTop(wnd)+y;
         
-		if (SysConfig.VideoSnowyFlag)
-        	vpoke(MK_FP(video_address, vad(xc, yc)), ch);
-		else
-        	poke(video_address, vad(xc, yc), ch);
+        poke(video_address, vad(xc, yc), ch);
 	}
 }
 
@@ -138,15 +128,15 @@ void wputs(WINDOW wnd, void *s, int x, int y)
 
     if (x1 < SCREENWIDTH && y1 < SCREENHEIGHT && isVisible(wnd))
         {
-        int ln[200];
-        int *cp1=ln;
+        u16 ln[512];
+        u16 *cp1=ln;
         int fg=foreground;
         int bg=background;
         int len;
         int off=0;
         unsigned char *str=s;
 
-        while (*str)
+        while (*str && (cp1 - ln) < (int)(sizeof(ln)/sizeof(ln[0]) - 1))
             {
             if (*str == CHANGECOLOR)
                 {
@@ -259,7 +249,6 @@ void get_videomode(void)
         video_address = 0xb000;
     else
         video_address = 0xb800 + video_page;
-
 }
 
 /* --------- scroll the window. d: 1 = up, 0 = dn ---------- */
@@ -281,67 +270,15 @@ void scroll_window(WINDOW wnd, RECT rc, int d)
 }
 
 
-/* Waits for the beginning of a vertical ("big") retrace, to
- * avoid flicker. Old version of this was in Assembly language.
- */
-static void near waitforretrace(void)
-{
-	/* disable interrupts */
-	disable();
-
-			/* next 2 lines are to catch a FULL vretrace */
-        if (inp(0x3da) & 8)		/* if inside vertical retrace */
-            while ( inp(0x3da) & 8 );	/* wait until retrace ends */
-
-        while (!( inp(0x3da) & 8 ));	/* wait for vretrace to START */
-	while (!( inp(0x3da) & 0x01 ));	/* wait for 1st hretrace in it */
-
-	/* re-enable interrupts */
-	enable();
-}
-
 void movetoscreen(void far *bf, int offset, int len)
 {
-	if (SysConfig.VideoSnowyFlag)
-		waitforretrace();
-	movedata(FP_SEG(bf), FP_OFF(bf), video_address, offset, len);
+	movedata(FP_SEG(bf), FP_OFF(bf), dpmi_seg_to_sel((unsigned short)video_address), offset, len);
 }
 
 void movefromscreen(void far *bf, int offset, int len)
 {
-	if (SysConfig.VideoSnowyFlag)
-		waitforretrace();
-	movedata(video_address, offset,	FP_SEG(bf), FP_OFF(bf),	len);
+	movedata(dpmi_seg_to_sel((unsigned short)video_address), offset,	FP_SEG(bf), FP_OFF(bf),	len);
 }
 
-
-static int near vpeek(int far *vp)
-{
-	int c;
-#if 0
-	if (SysConfig.VideoSnowyFlag)	/* added 0.7c */
-		waitforretrace();
-#endif
-	c = *vp;
-	return c;
-}
-
-static void near vpoke(int far *vp, int c)
-{
-	if (SysConfig.VideoSnowyFlag)	/* added 0.7c */
-		waitforretrace();
-	*vp = c;
-}
-
-BOOL GetSnowyFlag ( void )
-{
-		return SysConfig.VideoSnowyFlag;
-}
-
-
-void SetSnowyFlag ( BOOL newflag)
-{
-		SysConfig.VideoSnowyFlag = newflag;
-}
 
 

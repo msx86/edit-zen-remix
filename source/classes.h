@@ -44,11 +44,6 @@ ClassDef(  ERRORBOX,    DIALOG,  NULL,            SHADOW    |
                                                   HASBORDER  )
 ClassDef(  MESSAGEBOX,  DIALOG,  NULL,            SHADOW    |
                                                   HASBORDER  )
-ClassDef(  HELPBOX,     DIALOG,  HelpBoxProc,     MOVEABLE  |
-                                                  SAVESELF  |
-                                                  HASBORDER |
-                                                  NOCLIP    |
-                                                  CONTROLBOX )
 ClassDef(  STATUSBAR,   TEXTBOX, StatusBarProc,   NOCLIP     )
 
 /*

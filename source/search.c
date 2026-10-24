@@ -32,7 +32,7 @@ static void replacetext(WINDOW wnd, char *cp1, DBOX *db)
         if (wnd->textlen < strlen(wnd->text)+dif)    {
             /* ---- need to reallocate the text buffer ---- */
             int offset = (int)(cp1-wnd->text);
-            wnd->textlen += dif;
+            wnd->textlen += max(dif, 1024);
             wnd->text = DFrealloc(wnd->text, wnd->textlen+2);
             cp1 = wnd->text + offset;
         }
@@ -53,7 +53,7 @@ static void SearchTextBox(WINDOW wnd, int incr)
     DBOX *db = Replacing ? &ReplaceTextDB : &SearchTextDB;
     char *cp = GetEditBoxText(db, ID_SEARCHFOR);
     BOOL rpl = TRUE;
-    static FoundOne;
+    static int FoundOne;
     static int fromBeginning;
     static int OrigCol, OrigLine;
 
@@ -65,9 +65,54 @@ static void SearchTextBox(WINDOW wnd, int incr)
     }
 
     if (Replacing && CheckBoxSetting(&ReplaceTextDB, ID_REPLACEALL)) {
-        wnd->CurrCol = 0;
-        wnd->CurrLine = 0;
-        fromBeginning = 1;        
+        int rcount = 0;
+        unsigned int cur_off = 0;
+        int newlen = strlen(GetEditBoxText(&ReplaceTextDB, ID_REPLACEWITH));
+
+        if (cp == NULL || *cp == 0)
+            return;
+
+        while (wnd->text != NULL && cur_off < strlen(wnd->text)) {
+            char *p = wnd->text + cur_off;
+            while (*p) {
+                s1 = cp;
+                s2 = p;
+                while (*s1 && *s1 != 10) {
+                    if (SearchCmp(*s1, *s2))
+                        break;
+                    s1++; s2++;
+                }
+                if (*s1 == 0 || *s1 == 10)
+                    break;
+                p++;
+            }
+            if (s1 != NULL && (*s1 == 0 || *s1 == 10)) {
+                FoundOne = TRUE;
+                rcount++;
+                cur_off = (unsigned int)(p - wnd->text);
+                replacetext(wnd, p, &ReplaceTextDB);
+                cur_off += newlen;
+            } else {
+                break;
+            }
+        }
+        if (rcount > 0) {
+            wnd->TextChanged = TRUE;
+            BuildTextPointers(wnd);
+            wnd->CurrCol = 0;
+            wnd->CurrLine = 0;
+            wnd->wtop = 0;
+            wnd->wleft = 0;
+            wnd->WndRow = 0;
+            ClearTextBlock(wnd);
+            SendMessage(wnd, PAINT, 0, 0);
+            SendMessage(wnd, KEYBOARD_CURSOR, 0, 0);
+        } else {
+            MessageBox("Search", "No matching text found");
+            wnd->CurrCol = OrigCol;
+            wnd->CurrLine = OrigLine;
+        }
+        return;
     }
 
 again:

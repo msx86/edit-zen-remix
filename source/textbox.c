@@ -7,7 +7,7 @@ static void ComputeWindowLeft(WINDOW);
 static int ComputeVScrollBox(WINDOW);
 static int ComputeHScrollBox(WINDOW);
 static void MoveScrollBox(WINDOW, int);
-static char *GetTextLine(WINDOW, int);
+static char *GetTextLine(WINDOW, int, char *, int, BOOL *);
 
 BOOL VSliding;
 BOOL HSliding;
@@ -17,12 +17,12 @@ static BOOL AddTextMsg(WINDOW wnd, char *txt)
 {
     /* --- append text to the textbox's buffer --- */
     unsigned adln = strlen(txt);
-    if (adln > (unsigned)0xfff0)
+    if (adln > MAXTEXTLEN)
         return FALSE;
     if (wnd->text != NULL)    {
         /* ---- appending to existing text ---- */
         unsigned txln = strlen(wnd->text);
-        if ((long)txln+adln > (unsigned) 0xfff0)
+        if ((unsigned long)txln+adln > MAXTEXTLEN)
             return FALSE;
         if (txln+adln > wnd->textlen)    {
             wnd->text = DFrealloc(wnd->text, txln+adln+3);
@@ -375,14 +375,14 @@ static void PaintMsg(WINDOW wnd, PARAM p1, PARAM p2)
     /* ------ paint the client area ----- */
     RECT rc, rcc;
     int y;
-    char blankline[201];
+    char blankline[512];
 
     /* ----- build the rectangle to paint ----- */
     if ((RECT *)p1 == NULL)
         rc=RelativeWindowRect(wnd, WindowRect(wnd));
     else
         rc= *(RECT *)p1;
-    if (TestAttribute(wnd, HASBORDER) &&
+    if (TestAttribute(wnd, HASBORDER | LEFTBORDER) &&
             RectRight(rc) >= WindowWidth(wnd)-1) {
         if (RectLeft(rc) >= WindowWidth(wnd)-1)
             return;
@@ -416,6 +416,8 @@ static void PaintMsg(WINDOW wnd, PARAM p1, PARAM p2)
         else    {
             /* ---- paint a blank line ---- */
             SetStandardColor(wnd);
+            if (TestAttribute(wnd, LEFTBORDER))
+                wputch(wnd, ' ', 0, y);
             writeline(wnd, blankline+RectLeft(rcc),
                     RectLeft(rcc)+BorderAdj(wnd), y, FALSE);
         }
@@ -612,20 +614,75 @@ static void ComputeWindowLeft(WINDOW wnd)
 }
 
 /* ----- get the text to a specified line ----- */
-static char *GetTextLine(WINDOW wnd, int selection)
+static char *GetTextLine(WINDOW wnd, int selection, char *stack_buf, int stack_buf_size, BOOL *needs_free)
 {
     char *line;
     int len = 0;
     char *cp, *cp1;
+    char *end_line = NULL;
+
+    *needs_free = FALSE;
+    if (wnd == NULL || wnd->text == NULL)
+        return NULL;
+
+    if (selection + 1 < wnd->wlines)
+        end_line = TextLine(wnd, selection + 1);
+
     cp = cp1 = TextLine(wnd, selection);
-    while (*cp && *cp != '\n')    {
+    while (*cp && *cp != '\n' && (end_line == NULL || cp < end_line))    {
         len++;
         cp++;
     }
-    line = DFmalloc(len+7);
+    if (len + 7 <= stack_buf_size) {
+        line = stack_buf;
+    } else {
+        line = DFmalloc(len + 7);
+        if (line == NULL)
+            return NULL;
+        *needs_free = TRUE;
+    }
     memmove(line, cp1, len);
     line[len] = '\0';
     return line;
+}
+
+/* Set syntax highlight type for a window based on filename */
+void SetHighlightType(WINDOW wnd, const char *fn)
+{
+    int len;
+
+    if (wnd == NULL)
+        return;
+
+    if (GetClass(wnd) != EDITBOX) {
+        wnd->HighlightType = HL_NONE;
+        return;
+    }
+
+    if (fn == NULL)
+        fn = (const char *)wnd->extension;
+    if (fn == NULL)
+        fn = GetTitle(wnd);
+    if (fn == NULL) {
+        wnd->HighlightType = HL_NONE;
+        return;
+    }
+
+    /* Find basename */
+    {
+        const char *p1 = strrchr(fn, 0x5c);
+        const char *p2 = strrchr(fn, '/');
+        if (p2 > p1) p1 = p2;
+        if (p1 != NULL) fn = p1 + 1;
+    }
+
+    len = strlen(fn);
+    if (len >= 3 && stricmp(fn + len - 3, ".md") == 0)
+        wnd->HighlightType = HL_MARKDOWN;
+    else if (stricmp(fn, "holidia.txt") == 0)
+        wnd->HighlightType = HL_HOLIDIA;
+    else
+        wnd->HighlightType = HL_NONE;
 }
 
 /* ------- write a line of text to a textbox window ------- */
@@ -633,12 +690,17 @@ void WriteTextLine(WINDOW wnd, RECT *rcc, int y, BOOL reverse)
 {
     int len = 0;
     int dif = 0;
-    unsigned char line[200];
+    unsigned char line[512];
+    unsigned char local_line_buf[512];
+    BOOL needs_free = FALSE;
     RECT rc;
     unsigned char *lp, *svlp;
     int lnlen;
     int i;
     BOOL trunc = FALSE;
+    enum HighlightType hl;
+    BOOL is_heading = FALSE;
+    int sym_col = -1;
 
     /* ------ make sure y is inside the window ----- */
     if (y < wnd->wtop || y >= wnd->wtop+ClientHeight(wnd))
@@ -647,7 +709,7 @@ void WriteTextLine(WINDOW wnd, RECT *rcc, int y, BOOL reverse)
     /* ---- build the retangle within which can write ---- */
     if (rcc == NULL)    {
         rc = RelativeWindowRect(wnd, WindowRect(wnd));
-        if (TestAttribute(wnd, HASBORDER) &&
+        if (TestAttribute(wnd, HASBORDER | LEFTBORDER) &&
                 RectRight(rc) >= WindowWidth(wnd)-1)
             RectRight(rc) = WindowWidth(wnd)-2;
     }
@@ -664,10 +726,33 @@ void WriteTextLine(WINDOW wnd, RECT *rcc, int y, BOOL reverse)
         return;
 
     /* --- get the text and length of the text line --- */
-    lp = svlp = GetTextLine(wnd, y);
+    lp = svlp = (unsigned char *)GetTextLine(wnd, y, (char *)local_line_buf, sizeof(local_line_buf), &needs_free);
     if (svlp == NULL)
         return;
     lnlen = LineLength(lp);
+
+    hl = wnd->HighlightType;
+    if (hl == HL_MARKDOWN) {
+        if (svlp[0] == '#') {
+            is_heading = TRUE;
+        } else {
+            int k = 0;
+            while (svlp[k] == ' ' || svlp[k] == '	')
+                k++;
+            if (svlp[k] == '-' || svlp[k] == '*')
+                sym_col = k;
+        }
+    } else if (hl == HL_HOLIDIA) {
+        if (svlp[0] == '*') {
+            is_heading = TRUE;
+        } else {
+            int k = 0;
+            while (svlp[k] == ' ' || svlp[k] == '	')
+                k++;
+            if (svlp[k] == '-')
+                sym_col = k;
+        }
+    }
 
 	if (wnd->protect)	{
 		char *pp = lp;
@@ -799,7 +884,7 @@ void WriteTextLine(WINDOW wnd, RECT *rcc, int y, BOOL reverse)
         }
     }
     /* -------- pad the line --------- */
-    while (len < RectWidth(rc)+dif)
+    while (len < RectWidth(rc)+dif && len < (int)sizeof(line) - 1)
         line[len++] = ' ';
     line[len] = '\0';
     dif = 0;
@@ -814,13 +899,90 @@ void WriteTextLine(WINDOW wnd, RECT *rcc, int y, BOOL reverse)
         if (*(unsigned char *)line == CHANGECOLOR)
             dif = 3;
     }
-    else
-        SetStandardColor(wnd);
+    else {
+        if (is_heading) {
+            foreground = YELLOW;
+            background = WndBackground(wnd);
+        } else {
+            SetStandardColor(wnd);
+        }
+
+        if (sym_col >= 0) {
+            int vis_col = 0;
+            for (i = 0; i < sym_col; i++) {
+                if (svlp[i] == '	')
+                    vis_col = (vis_col / SysConfig.EditorTabSize + 1) * SysConfig.EditorTabSize;
+                else
+                    vis_col++;
+            }
+            {
+                int scr_col = vis_col - wnd->wleft;
+                if (scr_col >= 0 && scr_col < RectWidth(rc)) {
+                    BOOL is_selected = FALSE;
+                    if (TextBlockMarked(wnd)) {
+                        int bbl = wnd->BlkBegLine;
+                        int bel = wnd->BlkEndLine;
+                        int bbc = wnd->BlkBegCol;
+                        int bec = wnd->BlkEndCol;
+                        if (bbl > bel) {
+                            swap(bbl, bel);
+                            swap(bbc, bec);
+                        }
+                        if (bbl == bel && bbc > bec)
+                            swap(bbc, bec);
+
+                        if (y >= bbl && y <= bel) {
+                            if (y > bbl && y < bel)
+                                is_selected = TRUE;
+                            else if (y == bbl && y == bel)
+                                is_selected = (vis_col >= bbc && vis_col < bec);
+                            else if (y == bbl)
+                                is_selected = (vis_col >= bbc);
+                            else if (y == bel)
+                                is_selected = (vis_col < bec);
+                        }
+                    }
+                    if (!is_selected) {
+                        unsigned char *p = line + dif;
+                        int curr_vis = 0;
+                        while (*p && curr_vis < scr_col) {
+                            if (*p == CHANGECOLOR)
+                                p += 3;
+                            else if (*p == RESETCOLOR)
+                                p++;
+                            else {
+                                p++;
+                                curr_vis++;
+                            }
+                        }
+                        if (*p == svlp[sym_col]) {
+                            unsigned char sym_char = *p;
+                            memmove(p + 5, p + 1, strlen((char *)p + 1) + 1);
+                            p[0] = CHANGECOLOR;
+                            p[1] = LIGHTCYAN | 0x80;
+                            p[2] = background | 0x80;
+                            p[3] = sym_char;
+                            p[4] = RESETCOLOR;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (TestAttribute(wnd, LEFTBORDER)) {
+        //int save_fg = foreground;
+        //int save_bg = background;
+        //SetStandardColor(wnd);
+        wputch(wnd, ' ', 0, y-wnd->wtop+TopBorderAdj(wnd));
+        //foreground = save_fg;
+        //background = save_bg;
+    }
     /* ------- display the line -------- */
     writeline(wnd, line+dif,
                 RectLeft(rc)+BorderAdj(wnd),
                     y-wnd->wtop+TopBorderAdj(wnd), FALSE);
-    free(svlp);
+    if (needs_free)
+        free(svlp);
 }
 
 void MarkTextBlock(WINDOW wnd, int BegLine, int BegCol,
@@ -835,20 +997,34 @@ void MarkTextBlock(WINDOW wnd, int BegLine, int BegCol,
 /* ----- clear and initialize text line pointer array ----- */
 void ClearTextPointers(WINDOW wnd)
 {
-    wnd->TextPointers = DFrealloc(wnd->TextPointers, sizeof(int));
+    wnd->TextPointers = DFrealloc(wnd->TextPointers, 2 * sizeof(int));
     *(wnd->TextPointers) = 0;
+    *((wnd->TextPointers) + 1) = 0;
 }
 
-#define INITLINES 100
+#define INITLINES 1024
 
 /* ---- build array of pointers to text lines ---- */
 void BuildTextPointers(WINDOW wnd)
 {
-    char *cp = wnd->text, *cp1;
+    char *cp;
     int incrs = INITLINES;
     unsigned int off;
+    BOOL do_wrap = FALSE;
+    int wrap_width = 0;
+
+    if (wnd == NULL || wnd->text == NULL)
+        return;
+
+    if (wnd->WordWrapMode && isMultiLine(wnd) && ClientWidth(wnd) > 0) {
+        do_wrap = TRUE;
+        wrap_width = max(10, ClientWidth(wnd) - 1);
+    }
+
+    cp = wnd->text;
     wnd->textwidth = wnd->wlines = 0;
     while (*cp)    {
+        char *cp1;
         if (incrs == INITLINES)    {
             incrs = 0;
             wnd->TextPointers = DFrealloc(wnd->TextPointers,
@@ -859,12 +1035,38 @@ void BuildTextPointers(WINDOW wnd)
         wnd->wlines++;
         incrs++;
         cp1 = cp;
-        while (*cp && *cp != '\n')
-            cp++;
+
+        if (do_wrap) {
+            char *last_space = NULL;
+            int col = 0;
+            while (*cp && *cp != '\n' && col < wrap_width) {
+                if (*cp == ' ' || *cp == '\t')
+                    last_space = cp;
+                cp++;
+                col++;
+            }
+            if (*cp && *cp != '\n') {
+                if (last_space != NULL && last_space > cp1)
+                    cp = last_space + 1;
+            } else if (*cp == '\n') {
+                cp++;
+            }
+        } else {
+            while (*cp && *cp != '\n')
+                cp++;
+            if (*cp)
+                cp++;
+        }
         wnd->textwidth = max(wnd->textwidth,
                         (unsigned int) (cp - cp1));
-        if (*cp)
-            cp++;
+    }
+    if (wnd->wlines == 0) {
+        wnd->TextPointers = DFrealloc(wnd->TextPointers, 2 * sizeof(int));
+        *(wnd->TextPointers) = 0;
+        *((wnd->TextPointers) + 1) = 0;
+    } else {
+        /* Set sentinel at wlines pointing to terminating null */
+        *((wnd->TextPointers) + wnd->wlines) = (unsigned int) (cp - wnd->text);
     }
 }
 
@@ -885,16 +1087,24 @@ static void MoveScrollBox(WINDOW wnd, int vscrollbox)
 
 int TextLineNumber(WINDOW wnd, char *lp)
 {
-    int lineno;
-    char *cp;
-    for (lineno = 0; lineno < wnd->wlines; lineno++)    {
-        cp = wnd->text + *((wnd->TextPointers) + lineno);
-        if (cp == lp)
-            return lineno;
-        if (cp > lp)
-            break;
+    int low, high, mid;
+    unsigned int target_off;
+
+    if (wnd == NULL || wnd->wlines <= 0 || lp == NULL || wnd->text == NULL || lp <= wnd->text)
+        return 0;
+
+    target_off = (unsigned int)(lp - wnd->text);
+    low = 0;
+    high = wnd->wlines - 1;
+
+    while (low <= high) {
+        mid = low + (high - low) / 2;
+        if (*(wnd->TextPointers + mid) == target_off)
+            return mid;
+        else if (*(wnd->TextPointers + mid) < target_off)
+            low = mid + 1;
+        else
+            high = mid - 1;
     }
-    return lineno-1;
+    return max(0, high);
 }
-
-

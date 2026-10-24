@@ -23,12 +23,10 @@ BOOL LogMessageEnd ( WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2 );
 char logstr[512];
 log_levels CurrentLogLevel = LL_CRITICAL;
 BOOL Debug_LogMessages = FALSE;
-BOOL Debug_LogClockMessages = FALSE;
 
 FILE *LogFile;
 
 
-#ifdef __WATCOMC__
 void Log ( log_levels L, char *ModuleName, char *message )
 {
   time_t rawtime;
@@ -49,28 +47,6 @@ void Log ( log_levels L, char *ModuleName, char *message )
       fflush ( LogFile );
 	}
 }
-#else
-void Log ( log_levels L, char *ModuleName, char *message )
-{
-  time_t rawtime;
-  char times[27];
-  struct time t;
-  struct date d;
-
-	if ( (LogFile != NULL) && (L<=CurrentLogLevel) )
-	{
-
-			gettime (&t);
-			getdate (&d);
-
-			strcpy ( times, ctime (&rawtime)); times [24]= 0;
-      fprintf (LogFile, "%4d%02d%02d %02d:%02d:%02d.%02d [%s] %s\n", 
-      			d.da_year, d.da_mon, d.da_day, 
-      			t.ti_hour, t.ti_min, t.ti_sec, t.ti_hund, ModuleName, message);
-      fflush ( LogFile );
-	}
-}
-#endif
 
 
 
@@ -120,9 +96,6 @@ char  *MessageText ( MESSAGE msg )
                   case RESTORE                : return "RESTORE                ";
                   case INSIDE_WINDOW          : return "INSIDE_WINDOW          ";
                   case DEADCHILD              : return "DEADCHILD              ";
-                  case CLOCKTICK              : return "CLOCKTICK              ";
-                  case CAPTURE_CLOCK          : return "CAPTURE_CLOCK          ";
-                  case RELEASE_CLOCK          : return "RELEASE_CLOCK          ";
                   case KEYBOARD               : return "KEYBOARD               ";
                   case CAPTURE_KEYBOARD       : return "CAPTURE_KEYBOARD       ";
                   case RELEASE_KEYBOARD       : return "RELEASE_KEYBOARD       ";
@@ -176,7 +149,6 @@ char  *MessageText ( MESSAGE msg )
                   case ENTERFOCUS             : return "ENTERFOCUS             ";
                   case LEAVEFOCUS             : return "LEAVEFOCUS             ";
                   case ENDDIALOG              : return "ENDDIALOG              ";
-                  case DISPLAY_HELP           : return "DISPLAY_HELP           ";
                   case ADDSTATUS              : return "ADDSTATUS              ";
                   case DRAWVECTOR             : return "DRAWVECTOR             ";
                   case DRAWBOX                : return "DRAWBOX                ";
@@ -208,7 +180,6 @@ char  *ClassText ( CLASS cls )
                  case SPINBUTTON : return "SPINBUTTON ";
                  case ERRORBOX   : return "ERRORBOX   ";
                  case MESSAGEBOX : return "MESSAGEBOX ";
-                 case HELPBOX    : return "HELPBOX    ";
                  case STATUSBAR  : return "STATUSBAR  ";
 //                 case EDITOR     : return "EDITOR     ";
                  case TITLEBAR   : return "TITLEBAR   ";
@@ -230,18 +201,16 @@ static void LogMessage ( char * SectionName, WINDOW wnd, MESSAGE msg, PARAM p1, 
 BOOL LogMessageStart ( WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2 )
 {
     if (Debug_LogMessages)
-    	if  ( Debug_LogClockMessages ||  (msg != CLOCKTICK) )
-					LogMessage ( "MsgSysStart", wnd, msg, p1, p2);
-		return TRUE;
+		LogMessage ( "MsgSysStart", wnd, msg, p1, p2);
+	return TRUE;
 }
 
 
 BOOL LogMessageEnd ( WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2 )
 {
     if (Debug_LogMessages)
-    	if  ( Debug_LogClockMessages ||  (msg != CLOCKTICK) )
-					LogMessage ( "MsgSysEnd", wnd, msg, p1, p2);
-		return TRUE;
+		LogMessage ( "MsgSysEnd", wnd, msg, p1, p2);
+	return TRUE;
 }
 
 

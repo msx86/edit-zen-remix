@@ -39,3 +39,22 @@ Aitor Santamaria:   D-Flat is taken out as standalone libraries, as
                     Some minor bugs fixed.
                     EDIT 0.9 series, based on DFlat+.
 
+msx86:              32 bit to allow for working on larger files
+                    Added fullscreen editing mode
+                    Added dynamic visual word wrap
+                    Added simple syntax highlighting for markdown files
+                    Modified behaviour of next word/previous word shortcut
+                    Changed the menus to look more like QBasic
+                    Added some optimisations and bounds checks
+                    Removed things that I didn't need:
+                        The clock
+                        ASCII table
+                        Calendar
+                        Watch icon
+                        Clear, Uppercase and Lowercase functions
+                        Original word wrap implementation
+                        High res text modes
+                        CGA
+                        Loading and saving config settings
+                        Help
+                    

@@ -4,36 +4,6 @@
 
 #include "dflatp.h"
 
-
-enum dftools_messages { 
-    /* ------------ Legacy HelpBox dialog box ---------- */
-    ID_HELPTEXT = 5000,
-    ID_BACK,
-    ID_PREV,
-    ID_NEXT };
-
-
-/* ---- Tool: INTEGRATED HELP ------------------ */
-
-
-
-void BuildFileName(char *path, const char *fn, const char *ext);
-
-BOOL DisplayHelp(WINDOW, char *);
-void UnLoadHelpFile(void);
-void LoadHelpFile(char *);
-
-/* To use it: include in your code:
-    InstallHelpProcedure (DisplayHelp);
-    LoadHelpFile( "file name containing the HELP");
-
-    The needed HUFFC.EXE and FIXHELP.EXE are also built.
-    
-    See the FreeDOS EDIT sources to see how to create a basic help
-    file and include it within your application.
-*/
-
-
 /* ---- Tool: GENERIC LOGGING ------------------ */
 
 /* Within DFlat+ you can have logging routines within your code.
@@ -86,7 +56,6 @@ char  *ClassText ( CLASS cls );
 
 
 extern BOOL Debug_LogMessages;					/* Log messages automatically? */
-extern BOOL Debug_LogClockMessages; 		/* Log clock messages too? */
 
 
 

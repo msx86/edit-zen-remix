@@ -43,10 +43,6 @@
 #include <bios.h>
 #include <ctype.h>
 #include <io.h>
-#if __TURBOC__
-#include <sys\types.h>
-#include <sys\stat.h>
-#endif
 #include <time.h>
 #include <setjmp.h>
 #include "dflatp.h"
@@ -62,7 +58,9 @@
 #define FIRSTDELAY 7
 #define DOUBLETICKS 5
 
-#define MAXTEXTLEN 65000U /* maximum text buffer            */
+#ifndef MAXTEXTLEN
+#define MAXTEXTLEN (32 * 1024 * 1024UL) /* maximum text buffer: 32 MB     */
+#endif
 #define EDITLEN     1024  /* starting length for multiliner */
 #define ENTRYLEN     256  /* starting length for one-liner  */
 #define GROWLENGTH    64  /* buffers grow by this much      */
@@ -98,7 +96,7 @@
 #define SCROLLBARCHAR  (unsigned char) 176 
 #define SCROLLBOXCHAR  (unsigned char) 178
 /* ------------------ menu characters --------------------- */
-#define CHECKMARK      (unsigned char) (SCREENHEIGHT==25?251:4)
+#define CHECKMARK      (unsigned char) 251
 #define CASCADEPOINTER (unsigned char) '\x10'
 /* ----------------- title bar characters ----------------- */
 #define CONTROLBOXCHAR (unsigned char) '\xf0'
@@ -174,7 +172,6 @@ void SetScrollBars(WINDOW);
 #define HitControlBox(wnd, p1, p2)     \
      (TestAttribute(wnd, CONTROLBOX) && \
      p1 == 2 && p2 == 0)
-void CustomizeDisplayPropBox ( void );
 
 
 /* ---- standard window message processing prototypes ----- */
@@ -195,7 +192,6 @@ int SpinButtonProc(WINDOW, MESSAGE, PARAM, PARAM);
 int BoxProc(WINDOW, MESSAGE, PARAM, PARAM);
 int DialogProc(WINDOW, MESSAGE, PARAM, PARAM);
 int SystemMenuProc(WINDOW, MESSAGE, PARAM, PARAM);
-int HelpBoxProc(WINDOW, MESSAGE, PARAM, PARAM);
 int MessageBoxProc(WINDOW, MESSAGE, PARAM, PARAM);
 int CancelBoxProc(WINDOW, MESSAGE, PARAM, PARAM);
 int ErrorBoxProc(WINDOW, MESSAGE, PARAM, PARAM);

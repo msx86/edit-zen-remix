@@ -6,9 +6,6 @@ static int SelectionWidth(struct PopDown *);
 static int py = -1;
 int CurrentMenuSelection;
 
-static long int PopDownDelay = 0;
-#define MaxPopDownDelay 8000        /* approx. half a second = 8000 */ 
-
 extern int mctr;
 
 /* ------------ CREATE_WINDOW Message ------------- */
@@ -34,7 +31,6 @@ static int CreateWindowMsg(WINDOW wnd)
     rtn = BaseWndProc(POPDOWNMENU, wnd, CREATE_WINDOW, 0, 0);
     SendMessage(wnd, CAPTURE_MOUSE, 0, 0);
     SendMessage(wnd, CAPTURE_KEYBOARD, 0, 0);
-    SendMessage(wnd, CAPTURE_CLOCK, 0, 0);            
     SendMessage(NULL, SAVE_CURSOR, 0, 0);
     SendMessage(NULL, HIDE_CURSOR, 0, 0);
 
@@ -284,15 +280,10 @@ static BOOL KeyboardMsg(WINDOW wnd, PARAM p1, PARAM p2)
 
 
     switch ((int)p1)    {
-        case F1: /* (possibly context sensitive) help */
-            if (ActivePopDown == NULL)
-                SendMessage(pwnd, KEYBOARD, p1, p2);
-            else 
-                SystemHelp(wnd,
-                    (ActivePopDown+wnd->selection)->help);
+        case F1:
             return TRUE;
         case ESC:
-            PostMessage(wnd, CLOSE_POPDOWN, FALSE, 0);
+            PostMessage(wnd, CLOSE_POPDOWN, ZenMode ? TRUE : FALSE, 0);
             return TRUE;
 #ifdef HOOKKEYB
         case FWD: /* old name of right arrow */
@@ -344,7 +335,6 @@ static int CloseWindowMsg(WINDOW wnd)
 		if (FocusedWindow(wnd) != NULL) SendMessage (FocusedWindow(wnd), CLOSE_WINDOW, 0, 0);
         SendMessage (GetParent(wnd), DEADCHILD, 0, 0);
 
-    SendMessage(wnd, RELEASE_CLOCK, 0, 0);
     SendMessage(wnd, RELEASE_MOUSE, 0, 0);
     SendMessage(wnd, RELEASE_KEYBOARD, 0, 0);
     SendMessage(NULL, RESTORE_CURSOR, 0, 0);
@@ -361,24 +351,10 @@ int PopDownProc(WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2)
     WINDOW	pwnd = GetParent (wnd);
 
 
-    if (msg != CLOCKTICK)
-        PopDownDelay = 0;
-
     switch (msg)    {
         case CREATE_WINDOW:
             rtn = CreateWindowMsg(wnd);
-            return rtn;
-
-        case CLOCKTICK:
-            PopDownDelay++;
-            if (PopDownDelay >= MaxPopDownDelay ) {
-            		PopDownDelay = 0;
-							  if ((wnd->mnu != NULL) && (wnd->mnu->Selections != NULL))
-           		       if (isCascadedCommand2(wnd->mnu, (wnd->mnu->Selections+wnd->selection)->ActionId))
-            				    SendMessage(wnd, LB_CHOOSE, wnd->selection, 0);
-    				}  
-                    SendMessage(wnd->PrevClock, msg, p1, p2);
-    				return TRUE;  
+            return rtn;  
 					/* With SmoothMenus, no longer need to do anything special with LEFT_BUTTON */
 /*        case LEFT_BUTTON:
             LeftButtonMsg(wnd, p1, p2);

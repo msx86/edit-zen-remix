@@ -66,8 +66,6 @@ extern ColorScheme reverse;
 
 	/* System screen resolutions */
 extern  VideoResolution  TXT25;
-extern  VideoResolution  TXT43;
-extern  VideoResolution  TXT50;
 
 	/* Window attributes */
 #define SHADOW       0x0001
@@ -86,6 +84,7 @@ extern  VideoResolution  TXT50;
 #define MULTILINE    0x2000
 #define HASBORDER    0x4000
 #define HASSTATUSBAR 0x8000
+#define LEFTBORDER   0x00010000
 
 
 /* /////// UI System Enhancements ////////////////////// */
@@ -99,9 +98,6 @@ void *DFrealloc(void *, size_t);
 	/* Critical error detection */
 int TestCriticalError(void);
 
-	/* Manipulate the snowy flag (CGA screens) */
-BOOL GetSnowyFlag ( void );
-void SetSnowyFlag ( BOOL );
 
 	/* Select resolution and color schemes */
 void SelectLines(VideoResolution);
@@ -119,8 +115,6 @@ int DfpMain(int argc, char *argv[]);
 typedef struct sysconfigtype {
 		ColorScheme      VideoCurrentColorScheme;	  /* Read-only */
 		VideoResolution	 VideoCurrentResolution;    /* Read-only */
-		BOOL						 VideoSnowyFlag;            /* Read-only */
-		unsigned char    CountryTimeSeparator;      /* Read-write */
 		unsigned char    EditorTabSize;             /* Read-write */
 		BOOL             EditorGlobalReadOnly;      /* Read-write */
 } SysConfigType;
@@ -130,6 +124,8 @@ typedef struct sysconfigtype {
    If you wish to modify the read-only attributes, use the given
    functions to do so.  */
 extern SysConfigType SysConfig;
+extern BOOL ZenMode;
+BOOL HasOpenEditor(void);
 
 
 /* /////// MESSAGING SYSTEM //////////////////////////// */
@@ -201,13 +197,15 @@ BOOL isDerivedFrom(HWND, CLASS);
 /* ------- window and client coords - */
 #define WindowHeight(w)      ((w)->ht)
 #define WindowWidth(w)       ((w)->wd)
-#define BorderAdj(w)         (TestAttribute(w,HASBORDER)?1:0)
-#define BottomBorderAdj(w)   (TestAttribute(w,HASSTATUSBAR)?1:BorderAdj(w))
+#define LeftBorderAdj(w)     ((w) != NULL && TestAttribute(w, HASBORDER | LEFTBORDER) ? 1 : 0)
+#define RightBorderAdj(w)    ((w) != NULL && TestAttribute(w, HASBORDER) ? 1 : 0)
+#define BorderAdj(w)         LeftBorderAdj(w)
+#define BottomBorderAdj(w)   (TestAttribute(w, HASSTATUSBAR) ? 1 : (TestAttribute(w, HASBORDER) ? 1 : 0))
 #define TopBorderAdj(w)      ((TestAttribute(w,HASTITLEBAR) &&   \
                               TestAttribute(w,HASMENUBAR)) ?  \
                               2 : (TestAttribute(w,HASTITLEBAR | \
                               HASMENUBAR | HASBORDER) ? 1 : 0))
-#define ClientWidth(w)       (WindowWidth(w)-BorderAdj(w)*2)
+#define ClientWidth(w)       (WindowWidth(w)-LeftBorderAdj(w)-RightBorderAdj(w))
 #define ClientHeight(w)      (WindowHeight(w)-TopBorderAdj(w)-\
                               BottomBorderAdj(w))
 #define WindowRect(w)        ((w)->rc)
@@ -217,8 +215,8 @@ BOOL isDerivedFrom(HWND, CLASS);
 #define GetRight(w)          (RectRight(WindowRect(w)))
 #define GetClientTop(w)      (GetTop(w)+TopBorderAdj(w))
 #define GetClientBottom(w)   (GetBottom(w)-BottomBorderAdj(w))
-#define GetClientLeft(w)     (GetLeft(w)+BorderAdj(w))
-#define GetClientRight(w)    (GetRight(w)-BorderAdj(w))
+#define GetClientLeft(w)     (GetLeft(w)+LeftBorderAdj(w))
+#define GetClientRight(w)    (GetRight(w)-RightBorderAdj(w))
 
 RECT ClientRect(HWND);
 RECT RelativeWindowRect(HWND, RECT);
@@ -322,8 +320,10 @@ BOOL ItemSelected(HWND, int);
 
 /* -------- text box prototypes ---------- */
 #define TextLine(wnd, sel) \
-      (wnd->text + *((wnd->TextPointers) + sel))
+      ((wnd)->text + *((wnd)->TextPointers + \
+        ((sel) <= 0 ? 0 : ((wnd)->wlines > 0 && (sel) > (wnd)->wlines ? (wnd)->wlines : (sel)))))
 void WriteTextLine(HWND, RECT *, int, BOOL);
+void SetHighlightType(HWND, const char *);
 #define TextBlockMarked(wnd) (  wnd->BlkBegLine ||    \
                                 wnd->BlkEndLine ||    \
                                 wnd->BlkBegCol  ||    \
@@ -434,8 +434,6 @@ void DFlatpAboutBox ( void );
 BOOL OpenFileDialogBox(char *, char *);
 BOOL SaveAsDialogBox(char *, char *, char *);
 
-void DisplayProperties ( HWND );
-
 void ExecuteNonDFP (char *);
 
 void MoreWindows(HWND);
@@ -452,11 +450,6 @@ void ClearClipboard(void);
 
 /* /////// DFLAT+ HOOKS  /////////////////////////////// */
 
-
-/* ------------- help system --------------------- */
-void BuildFileName(char *path, const char *fn, const char *ext);
-BOOL SystemHelp(HWND w, char *topic);
-BOOL InstallHelpProcedure ( BOOL (* f) () );
 
 /* -------------- message logging system -------- */
 BOOL LogMessageStart ( WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2 );

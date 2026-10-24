@@ -27,8 +27,11 @@
 #define USECBRKHNLDR 1 /* removing this line disables ctrl-break processing */
 #define CLASSIC_WINDOW_NUMBERING 0  /* 0= stack-independent ordering */
 
-	/* Components */
 #define INCLUDE_PICTUREBOX
+
+#ifndef MAXTEXTLEN
+#define MAXTEXTLEN (32 * 1024 * 1024UL) /* 32 MB maximum text buffer */
+#endif
 
 
 /* /////// MODULE ///////////////////////////////////////// */
@@ -72,6 +75,12 @@ extern CLASSDEFS classdefs[];
 
 #include "dialbox.h"
 
+
+enum HighlightType {
+    HL_NONE = 0,
+    HL_MARKDOWN,   /* *.md */
+    HL_HOLIDIA     /* holidia.txt */
+};
 
 /* /////// WINDOW ///////////////////////////////////////// */
 
@@ -117,10 +126,8 @@ typedef struct window {
     void *wrapper;              /* used by C++ wrapper class */
     struct window *PrevMouse;   /* previous mouse capture   */
     struct window *PrevKeyboard;/* previous keyboard capture*/
-    struct window *PrevClock;   /* previous clock capture   */
     struct window *MenuBarWnd;  /* menu bar                 */
     struct window *StatusBar;   /* status bar               */
-    int isHelping;	        /* > 0 when help is being displayed */
     /* ----------------- text box fields ------------------ */
     int wlines;     /* number of lines of text              */
     int wtop;       /* text line that is on the top display */
@@ -151,6 +158,7 @@ typedef struct window {
     BOOL InsertMode;   /* TRUE or FALSE for text insert     */
     BOOL WordWrapMode; /* TRUE or FALSE for word wrap       */
     unsigned int MaxTextLength; /* maximum text length      */
+    enum HighlightType HighlightType; /* syntax highlight type */
     /* ---------------- dialog box fields ----------------- */
     int ReturnCode;        /* return code from a dialog box */
     BOOL Modal;		   /* True if a modeless dialog box */
@@ -160,8 +168,6 @@ typedef struct window {
     MENU *mnu;		/* points to menu structure         */
     MBAR *holdmenu; /* previous active menu                 */
     struct window *oldFocus;
-    /* -------------- status bar fields ------------------- */
-    BOOL TimePosted; /* True if time has been posted        */
 #ifdef INCLUDE_PICTUREBOX
     /* ------------- picture box fields ------------------- */
     int VectorCount;  /* number of vectors in vector list   */

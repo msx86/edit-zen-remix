@@ -22,7 +22,7 @@ static int px = -1, py = -1;
 static int diff;
 static struct window dwnd = {DUMMY, NULL, NormalProc,
                                 {-1,-1,-1,-1}};
-static int *Bsave;
+static unsigned short *Bsave;
 static int Bht, Bwd;
 BOOL WindowMoving;
 BOOL WindowSizing;
@@ -159,9 +159,6 @@ static BOOL KeyboardMsg(WINDOW wnd, PARAM p1, PARAM p2)
         return TRUE;
     }
     switch ((int)p1)    {
-        case F1:
-            SendMessage(wnd, COMMAND, ID_HELP, 0);
-            return TRUE;
         case ' ':
             if ((int)p2 & ALTKEY)
                 if (TestAttribute(wnd, HASTITLEBAR))
@@ -185,9 +182,6 @@ static BOOL KeyboardMsg(WINDOW wnd, PARAM p1, PARAM p2)
 static void CommandMsg(WINDOW wnd, PARAM p1)
 {
     switch ((int)p1)    {
-        case ID_HELP:
-            SystemHelp(wnd,ClassNames[GetClass(wnd)]);
-            break;
 #ifdef INCLUDE_RESTORE
         case ID_SYSRESTORE:
             SendMessage(wnd, RESTORE, 0, 0);
@@ -417,8 +411,8 @@ static BOOL MouseMovedMsg(WINDOW wnd, PARAM p1, PARAM p2)
 {
     if (WindowMoving)    {
         int leftmost = 0, topmost = 0,
-            bottommost = SCREENHEIGHT-2,
-            rightmost = SCREENWIDTH-2;
+            bottommost = SCREENHEIGHT-WindowHeight(wnd),
+            rightmost = SCREENWIDTH-WindowWidth(wnd);
         int x = (int) p1 - diff;
         int y = (int) p2;
         if (GetParent(wnd) != NULL &&
@@ -426,9 +420,13 @@ static BOOL MouseMovedMsg(WINDOW wnd, PARAM p1, PARAM p2)
             WINDOW wnd1 = GetParent(wnd);
             topmost    = GetClientTop(wnd1);
             leftmost   = GetClientLeft(wnd1);
-            bottommost = GetClientBottom(wnd1);
-            rightmost  = GetClientRight(wnd1);
+            bottommost = GetClientBottom(wnd1) - WindowHeight(wnd) + 1;
+            rightmost  = GetClientRight(wnd1) - WindowWidth(wnd) + 1;
         }
+        if (rightmost < leftmost)
+            rightmost = leftmost;
+        if (bottommost < topmost)
+            bottommost = topmost;
         if (x < leftmost || x > rightmost ||
                 y < topmost || y > bottommost)    {
             x = max(x, leftmost);
@@ -460,7 +458,7 @@ static void MaximizeMsg(WINDOW wnd)
     holdrc = wnd->RestoredRC;
     rc.rt = SCREENWIDTH-1;
     rc.bt = SCREENHEIGHT-1;
-    if (GetParent(wnd))
+    if (GetParent(wnd) && !(ZenMode && GetClass(wnd) == EDITBOX))
         rc = ClientRect(GetParent(wnd));
     wnd->oldcondition = wnd->condition;
     wnd->condition = ISMAXIMIZED;
@@ -492,6 +490,8 @@ static void MinimizeMsg(WINDOW wnd)
 {
     RECT rc;
     RECT holdrc;
+    if (ZenMode && GetClass(wnd) == EDITBOX)
+        return;
 
     holdrc = wnd->RestoredRC;
     rc = PositionIcon(wnd);
@@ -520,6 +520,8 @@ static void MinimizeMsg(WINDOW wnd)
 static void RestoreMsg(WINDOW wnd)
 {
     RECT holdrc;
+    if (ZenMode && GetClass(wnd) == EDITBOX)
+        return;
     holdrc = wnd->RestoredRC;
     wnd->oldcondition = wnd->condition;
     wnd->condition = ISRESTORED;
@@ -628,8 +630,6 @@ static void CloseWindowMsg(WINDOW wnd)
     }
 
 	/* ----- release captured resources ------ */
-    if (wnd->PrevClock != NULL)
-        SendMessage(wnd, RELEASE_CLOCK, 0, 0);
     if (wnd->PrevMouse != NULL)
         SendMessage(wnd, RELEASE_MOUSE, 0, 0);
     if (wnd->PrevKeyboard != NULL)
@@ -686,8 +686,6 @@ int NormalProc(WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2)
         case HIDE_WINDOW:
             HideWindowMsg(wnd);
             break;
-        case DISPLAY_HELP:
-            return SystemHelp(wnd, (char *)p1);
         case INSIDE_WINDOW:
             return InsideWindow(wnd, (int) p1, (int) p2);
         case KEYBOARD:
@@ -757,12 +755,16 @@ int NormalProc(WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2)
 #endif
 #ifdef INCLUDE_MINIMIZE
         case MINIMIZE:
+            if (ZenMode && GetClass(wnd) == EDITBOX)
+                return TRUE;
             if (wnd->condition != ISMINIMIZED)
                 MinimizeMsg(wnd);
             break;
 #endif
 #ifdef INCLUDE_RESTORE
         case RESTORE:
+            if (ZenMode && GetClass(wnd) == EDITBOX)
+                return TRUE;
             if (wnd->condition != ISRESTORED)    {
 #ifdef INCLUDE_MAXIMIZE
                 if (wnd->oldcondition == ISMAXIMIZED)
@@ -1053,10 +1055,10 @@ static void SaveBorder(RECT rc)
 {
     RECT lrc;
     int i;
-    int *cp;
+    unsigned short *cp;
     Bht = RectBottom(rc) - RectTop(rc) + 1;
     Bwd = RectRight(rc) - RectLeft(rc) + 1;
-    Bsave = DFrealloc(Bsave, (Bht + Bwd) * 4);
+    Bsave = DFrealloc(Bsave, (Bht + Bwd) * 2 * sizeof(unsigned short));
 
     lrc = rc;
     RectBottom(lrc) = RectTop(lrc);
@@ -1066,8 +1068,8 @@ static void SaveBorder(RECT rc)
     cp = Bsave + Bwd * 2;
     hide_mousecursor();
     for (i = 1; i < Bht-1; i++)    {
-        *cp++ = GetVideoChar(RectLeft(rc),RectTop(rc)+i);
-        *cp++ = GetVideoChar(RectRight(rc),RectTop(rc)+i);
+        *cp++ = (unsigned short)GetVideoChar(RectLeft(rc),RectTop(rc)+i);
+        *cp++ = (unsigned short)GetVideoChar(RectRight(rc),RectTop(rc)+i);
     }
     show_mousecursor();
 }
@@ -1077,7 +1079,7 @@ static void RestoreBorder(RECT rc)
     if (Bsave != NULL)    {
         RECT lrc;
         int i;
-        int *cp;
+        unsigned short *cp;
         lrc = rc;
         RectBottom(lrc) = RectTop(lrc);
         storevideo(lrc, Bsave);

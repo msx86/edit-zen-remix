@@ -5,6 +5,7 @@
 
 /* D E F I N E S ///////////////////////////////////////////////////////// */
 
+#include "sysint.h"
 #define CHARSLINE 80
 #define LINESPAGE 66
 
@@ -19,16 +20,11 @@
 #include <bios.h>
 #include <ctype.h>
 #include <io.h>
-#if __TURBOC__
-#include <sys\types.h>
-#include <sys\stat.h>
-#endif
 #include <time.h>
 #include <setjmp.h>
 
 #include "dflatp.h"
 #include "dfptools.h"
-#include "config.h"
 #include "edit.h"
 
 /* G L O B A L S ///////////////////////////////////////////////////////// */
@@ -39,8 +35,24 @@ extern DBOX PrintSetup;
 char DFlatApplication[] = "Edit";
 static char Untitled[] = "Untitled";
 static int wndpos, /* LineStartsAt, StartLine, */ LineCtr, CharCtr;
-BOOL ConfigLoaded = FALSE;
+static BOOL InsertMode = TRUE;
+static BOOL WordWrap = TRUE;
+BOOL ZenMode = FALSE;
 WINDOW EditApplication = NULL;
+
+BOOL HasOpenEditor(void)
+{
+    WINDOW cwnd;
+    if (EditApplication == NULL)
+        return FALSE;
+    cwnd = FirstWindow(EditApplication);
+    while (cwnd != NULL) {
+        if (GetClass(cwnd) == EDITBOX && cwnd->condition != ISCLOSING)
+            return TRUE;
+        cwnd = NextWindow(cwnd);
+    }
+    return FALSE;
+}
 
 
 
@@ -53,14 +65,9 @@ static void SelectFile(WINDOW);
 static void PadWindow(WINDOW, char *);
 static void OpenPadWindow(WINDOW, char *,char *);
 static void LoadFile(WINDOW);
-static void PrintPad(WINDOW);
 static void SaveFile(WINDOW, int);
-#ifdef DELFILE
-static void DeleteFile(WINDOW);
-#endif
 static int EditorProc(WINDOW, MESSAGE, PARAM, PARAM);
 static char *NameComponent(char *);
-static int PrintSetupProc(WINDOW, MESSAGE, PARAM, PARAM);
 static void FixTabMenu(void);
 
 /* F U N C T I O N S ///////////////////////////////////////////////////// */
@@ -96,116 +103,74 @@ int DfpMain(int argc, char *argv[])
     char *fileargs[64], *optargs[64];
     int n_options, n_files, index, help_flag=0;
     char WindowTitle[255];
-    VideoResolution VR;
     
-
 #ifdef NEWLOG
  		StartLogger ("message.log", LL_CRITICAL);
  		Debug_LogMessages = TRUE;
  		CurrentLogLevel = LL_NOTIFY;
 #endif
 
-
-		ConfigLoaded = LoadConfig();
-
-    if (!ConfigLoaded) {
-        /* LoadConfig moved to early moment in 0.7b, fixes /B handling */
-        cfg.ScreenLines = SCREENHEIGHT; /* use current height */
-    } else {
-    	SelectColorScheme (cfg.clr);
-    	if (ismono() && !isEGA() && !isVGA())     /* --- CGA --- */
-    			SetSnowyFlag (cfg.snowy);
-    	SysConfig.EditorTabSize = cfg.Tabs;
-    }
-
-   	switch (cfg.ScreenLines)  {
-    		case 50:  VR = TXT50; break;
-    		case 43:  VR = TXT43; break;
-    		default:  VR = TXT25; break;
-   	}
-   	SelectLines (VR);
-
     n_options = classify_args(argc, argv, fileargs, optargs);
     n_files = argc - n_options - 1; /* the (-)1 is argv[0] */
 
-    for (index=0; index<n_options; index++)
-        {
+    for (index=0; index<n_options; index++) {
         if (optargs[index][0] == '?') help_flag=1;
         else if (optargs[index][0] == 'B' || optargs[index][0] == 'b')
 							SelectColorScheme (bw);
         else if (optargs[index][0] == 'i' || optargs[index][0] == 'I')
 							SelectColorScheme (reverse);
         else if (optargs[index][0] == 'r' || optargs[index][0] == 'R')
-            cfg.ReadOnlyMode=TRUE;
-        else if (optargs[index][0] == 'H' || optargs[index][0] == 'h') {
-            if (isEGA() || isVGA()) 
-            		SelectLines (isVGA() ? TXT50 : TXT43);
-            }
-            /* 0.7a and before: cfg.ScreenLines = SCREENHEIGHT; */
-        else
-            {
+            SysConfig.EditorGlobalReadOnly = TRUE;
+        else if (optargs[index][0] == 'z' || optargs[index][0] == 'Z')
+            ZenMode = TRUE;
+        else {
             printf("Invalid parameter - /%s\n", strupr(optargs[index]));
+            unhidecursor();
             exit(1);
-            }
-
         }
+    }
 
     if (help_flag)
-        {
-        printf("FreeDOS Editor    Version %s.\n\n"
-               "Syntax: EDIT [/B] [/H] [/?] [file(s)]\n"
+    {
+        printf("Syntax: EDIT [/B] [/I] [/R] [/Z] [/?] [file(s)]\n"
                "  /B     Force monochrome mode\n"
                "  /I     Use inverse color scheme\n"
-               "  /H     Use 43/50 lines on EGA/VGA\n"
                "  /R     Open all files read-only\n"
+               "  /Z     Enable zen mode (full screen editor)\n"
                "  /?     Display this help message\n"
                "  [file] Specify file(s) to load.\n"
-               "         Wildcards can be used here.\n", DFlatpVersion);
+               "         Wildcards can be used here.\n");
+        unhidecursor();
         exit(1);
-        }
-
-    InstallHelpProcedure (DisplayHelp);
-
-		SysConfig.EditorGlobalReadOnly = cfg.ReadOnlyMode;
+    }
 
     /* (LoadConfig was called at this place in pre-0.7b versions) */
-
-    if (cfg.ReadOnlyMode)
-    		sprintf (WindowTitle, "FreeDOS EDIT [viewer]");
-    else
-    		sprintf (WindowTitle, "FreeDOS EDIT");
-    		
-    
-    set_mouseposition(0, 0);
-    
-    EditApplication = CreateWindow(APPLICATION, WindowTitle, 0, 0, -1, -1,
+   	SelectLines (TXT25);
+	SysConfig.EditorTabSize = 8;
+   
+    EditApplication = CreateWindow(APPLICATION, "", 0, 0, -1, -1,
             &MainMenu, NULL, MemoPadProc, (int)(HASSTATUSBAR));
 
-    LoadHelpFile(DFlatApplication);
     SendMessage(EditApplication, SETFOCUS, TRUE, 0);
 
     /*  Load the files from args - if the file does not exist, open a new
         window.... */
-    for (index=0;index<n_files;index++)
-        {
+    for (index=0;index<n_files;index++) {
         /*  Check if the file exists... */
         /* added by Eric: Do NOT try to open files with names */
         /* that contain wildcards, otherwise you may NewFile  */
         /* files with wildcards in their names. Sigh! 11/2002 */
         fp = NULL;
-        if (((strchr(fileargs[index],'*') == NULL)) && ((strchr(fileargs[index],'?') == NULL)) && ((fp = fopen(fileargs[index],"rt")) == NULL))
-            {
+        if (((strchr(fileargs[index],'*') == NULL)) && ((strchr(fileargs[index],'?') == NULL)) && ((fp = fopen(fileargs[index],"rt")) == NULL)) {
             NewFile(EditApplication,fileargs[index]);
-            }
-        else
-            {
+        }
+        else {
             if (fp != NULL)
                  fclose(fp);  /* don't leave open file handle [from test if exists in above if] */
-
             PadWindow(EditApplication, fileargs[index]);
-            }
-
         }
+
+    }
 
 
 	ProcessMessages();
@@ -254,16 +219,15 @@ static int MemoPadProc(WINDOW wnd,MESSAGE msg,PARAM p1,PARAM p2)
         case CREATE_WINDOW:
       
             rtn = DefaultWndProc(wnd, msg, p1, p2);
-            if (cfg.InsertMode)
+            if (InsertMode)
                 SetCommandToggle(&MainMenu, ID_INSERT);
 
-            if (cfg.WordWrap)
+            if (WordWrap)
                 SetCommandToggle(&MainMenu, ID_WRAP);
 
             FixTabMenu();
             return rtn;
-   	    case CLOSE_WINDOW:
-    				UnLoadHelpFile();
+    	    case CLOSE_WINDOW:
     				break;
         case COMMAND:
 	    switch ((int)p1)
@@ -275,28 +239,24 @@ static int MemoPadProc(WINDOW wnd,MESSAGE msg,PARAM p1,PARAM p2)
             break;
         case ID_CLOSEALL:
             CloseAll(wnd, FALSE);
+            if (ZenMode && !HasOpenEditor()) {
+                if (EditApplication->MenuBarWnd != NULL) {
+                    SetVisible(EditApplication->MenuBarWnd);
+                    ReFocus(EditApplication->MenuBarWnd);
+                    SendMessage(EditApplication->MenuBarWnd, PAINT, 0, 0);
+                }
+                if (EditApplication->StatusBar != NULL) {
+                    SetVisible(EditApplication->StatusBar);
+                    ReFocus(EditApplication->StatusBar);
+                    SendMessage(EditApplication->StatusBar, PAINT, 0, 0);
+                }
+                SendMessage(EditApplication, SETFOCUS, TRUE, 0);
+                SendMessage(EditApplication, PAINT, 0, 0);
+            }
             break;
         case ID_MOREWINDOWS:
             MoreWindows(wnd);
             break;
-        case ID_HELP:
-            DisplayHelp(wnd, DFlatApplication);
-            break;
-        case ID_HELPHELP:
-            DisplayHelp(wnd, "HelpHelp");
-            break;
-        case ID_EXTHELP:
-            DisplayHelp(wnd, "ExtHelp");
-            break;
-        case ID_KEYSHELP:
-            DisplayHelp(wnd, "KeysHelp");
-            break;
-        case ID_HELPINDEX:
-            DisplayHelp(wnd, "HelpIndex");
-            break;
-        case ID_DISPLAY:
-							DisplayProperties (wnd);
-            	return TRUE;
 #ifdef INCLUDE_LOGGING
         case ID_LOG:
             MessageLog(wnd);
@@ -322,68 +282,38 @@ static int MemoPadProc(WINDOW wnd,MESSAGE msg,PARAM p1,PARAM p2)
                     SendMessage(inFocus, CLOSE_WINDOW, 0, 0);
                     SkipApplicationControls();
                     return TRUE;
-#ifdef DELFILE
-                case ID_DELETEFILE:
-		    DeleteFile(inFocus);
-		    return TRUE;
-#endif
-                case ID_PRINTSETUP:
-                    DialogBox(wnd, &PrintSetup, TRUE, PrintSetupProc);
-                    return TRUE;
-		case ID_PRINT:
-		    PrintPad(inFocus);
-		    return TRUE;
-                case ID_DOS:
-										 ExecuteNonDFP ( getenv("COMSPEC"));
-                     break;
                 case ID_EXIT: 
             						PostMessage(wnd, CLOSE_WINDOW, 0, 0);
                     return TRUE;
                 case ID_WRAP:
-                    cfg.WordWrap = GetCommandToggle(&MainMenu, ID_WRAP);
+                    WordWrap = GetCommandToggle(&MainMenu, ID_WRAP);
+                    if (inFocus != NULL)
+                        SendMessage(inFocus, COMMAND, ID_WRAP, 0);
 		    return TRUE;
                 case ID_INSERT:
-                    cfg.InsertMode = GetCommandToggle(&MainMenu, ID_INSERT);
+                    InsertMode = GetCommandToggle(&MainMenu, ID_INSERT);
                     return TRUE;
 							 case ID_TAB0:
-		    						SysConfig.EditorTabSize = cfg.Tabs = 1; /* type-through TAB char mode -ea */
+		    						SysConfig.EditorTabSize = 1; /* type-through TAB char mode -ea */
                     FixTabMenu(); /* show current value in tab menu */
 		    return TRUE;
                 case ID_TAB2:
-                    SysConfig.EditorTabSize = cfg.Tabs = 2;
+                    SysConfig.EditorTabSize = 2;
                     FixTabMenu(); /* show current value in tab menu */
 		    return TRUE;
                 case ID_TAB4:
-                    SysConfig.EditorTabSize = cfg.Tabs = 4;
+                    SysConfig.EditorTabSize = 4;
                     FixTabMenu();
 		    return TRUE;
                 case ID_TAB6:
-                    SysConfig.EditorTabSize = cfg.Tabs = 6; 
+                    SysConfig.EditorTabSize = 6; 
                     FixTabMenu();
 		    return TRUE;
                 case ID_TAB8:
-                    SysConfig.EditorTabSize = cfg.Tabs = 8;
+                    SysConfig.EditorTabSize = 8;
                     FixTabMenu();
 		    return TRUE;
-                case ID_SAVEOPTIONS:
-                     SaveConfig();
-		    return TRUE;
-#ifndef NOCALENDAR
-                case ID_CALENDAR:
-                    Calendar(wnd); 
-                    return TRUE;
-#endif
-#if WITH_ASCIITAB			/* new 0.7c */
-                case ID_ASCIITAB:
-                    Asciitable(wnd); 
-                    return TRUE;
-#endif
-		case ID_ABOUT:
-		    ProgramAboutBox ();
-		    return TRUE;
-		case ID_ABOUTDFP:
-		    DFlatpAboutBox ();
-		    return TRUE;
+
 		default:
 		    break;
 
@@ -406,7 +336,7 @@ static void NewFile(WINDOW wnd, char *FileName)
 /* --- The Open... command. Select a file  --- */
 static void SelectFile(WINDOW wnd)
 {
-    char FileName[64];
+    char FileName[MAXPATH];
 
     if (OpenFileDialogBox("*.*", FileName))
         {
@@ -451,16 +381,31 @@ static void OpenPadWindow(WINDOW wnd, char *FileName,char *NewFileName)
 
 	Fname = NameComponent(FileName);
 
-        /* check file size */
-        if (sb.st_size > 64000UL)
+        /* check file size against 32 MB limit */
+        if (sb.st_size > MAXTEXTLEN)
+        {
+            ermsg = DFmalloc(strlen(FileName)+100);
+            sprintf(ermsg, "File too large (exceeds 32 MB limit):\n%s", FileName);
+            ErrorMessage(ermsg);
+            free(ermsg);
+            return;
+        }
+
+        /* check if the machine has enough free memory to load the file */
+        {
+            unsigned long free_mem = get_free_dpmi_memory();
+            /* Loading needs read buffer + window text + line pointers + safety margin */
+            unsigned long needed = (unsigned long)sb.st_size * 2 + ((unsigned long)sb.st_size / 4) + (512 * 1024UL);
+            if (free_mem > 0 && free_mem < needed)
             {
-            ermsg = DFmalloc(strlen(FileName)+100); /* alloc fixed 0.7a */
-	    strcpy(ermsg, "File too large for this version of Edit:\n");
-	    strcat(ermsg, FileName);
-	    ErrorMessage(ermsg);
-	    free(ermsg);
-	    return;
+                ermsg = DFmalloc(strlen(FileName)+160);
+                sprintf(ermsg, "Not enough free memory to load %s:\nNeed %lu KB, machine has %lu KB free",
+                        Fname, needed / 1024UL, free_mem / 1024UL);
+                ErrorMessage(ermsg);
+                free(ermsg);
+                return;
             }
+        }
 
         } /* actual filename given */
 
@@ -471,22 +416,38 @@ static void OpenPadWindow(WINDOW wnd, char *FileName,char *NewFileName)
     if (wndpos == 20)
         wndpos = 2;
 
-    wnd1 = CreateWindow(EDITBOX,
-		Fname,
-		(wndpos-1)*2, wndpos, 10, 40,
-		NULL, wnd, EditorProc,
-		SHADOW     |
-		MINMAXBOX  |
-		CONTROLBOX |
-		VSCROLLBAR |
-		HSCROLLBAR |
-		MOVEABLE   |
-		HASBORDER  |
-        HASTITLEBAR|
-		SIZEABLE   |
-        MULTILINE);
+    if (ZenMode) {
+        if (EditApplication != NULL) {
+            if (EditApplication->MenuBarWnd != NULL)
+                ClearVisible(EditApplication->MenuBarWnd);
+            if (EditApplication->StatusBar != NULL)
+                ClearVisible(EditApplication->StatusBar);
+        }
+        wnd1 = CreateWindow(EDITBOX,
+            Fname,
+            0, 0, SCREENHEIGHT, SCREENWIDTH,
+            NULL, wnd, EditorProc,
+            MULTILINE | NOCLIP | LEFTBORDER);
+    } else {
+        wnd1 = CreateWindow(EDITBOX,
+            Fname,
+            (wndpos-1)*2, wndpos, 10, 40,
+            NULL, wnd, EditorProc,
+            SHADOW     |
+            MINMAXBOX  |
+            CONTROLBOX |
+            VSCROLLBAR |
+            HSCROLLBAR |
+            MOVEABLE   |
+            HASBORDER  |
+            HASTITLEBAR|
+            SIZEABLE   |
+            MULTILINE);
+    }
 
-    if (cfg.ReadOnlyMode)		/* new feature in 0.7b */
+    wnd1->WordWrapMode = WordWrap;
+
+    if (SysConfig.EditorGlobalReadOnly)		/* new feature in 0.7b */
         AddAttribute(wnd1, READONLY);
         /* needed because ReadOnlyMode must not make ALL text */
         /* entry fields read only, only EDITBOXes become r/o! */
@@ -524,6 +485,8 @@ static void OpenPadWindow(WINDOW wnd, char *FileName,char *NewFileName)
 
         }
 
+    SetHighlightType(wnd1, wnd1->extension);
+
     SendMessage(wnd1, SETFOCUS, TRUE, 0);
     SendMessage(wnd1, MAXIMIZE, 0, 0); 
 
@@ -534,47 +497,99 @@ static void LoadFile(WINDOW wnd)
 {
     char *Buf = NULL;
     unsigned int recptr = 0;
+    unsigned int buf_cap = 0;
     FILE *fp;
     WINDOW wwnd;
+    long fsize = 0;
 
     if (!strcmp(wnd->extension, Untitled))
     {
       SendMessage(wnd, SETTEXT, (PARAM) "", 0); /* fill with empty string */
-      /* could show a messagebox of some kind here */
       return;
     } /* not a real file load */
 
-    if ((fp = fopen(wnd->extension, "rt")) != NULL) /* why "t"ext mode? */
+    if ((fp = fopen(wnd->extension, "rt")) != NULL)
     {
-        /* (could use ExpandTabs() here alternatively!?) */
         int expandTabs = -1;
         int theColumn = 0;
         unsigned int i;
-        unsigned int rmax;
+        unsigned int rmax = 1024;
+        int coop_ctr = 0;
 
-    	  wwnd = WatchIcon();
+        fseek(fp, 0, SEEK_END);
+        fsize = ftell(fp);
+        fseek(fp, 0, SEEK_SET);
+
+        if (fsize > (long)MAXTEXTLEN)
+        {
+            fclose(fp);
+            ErrorMessage("File too large (exceeds 32 MB limit).");
+            return;
+        }
+
+        buf_cap = (fsize > 0) ? (unsigned int)fsize + 4096 : 4096;
+        Buf = malloc(buf_cap);
+        if (Buf == NULL)
+        {
+            buf_cap = 4096;
+            Buf = malloc(buf_cap);
+        }
+        if (Buf == NULL)
+        {
+            fclose(fp);
+            ErrorMessage("Not enough memory to load file.");
+            return;
+        }
+        memset(Buf, 0, buf_cap);
+
+        wwnd = MomentaryMessage("Loading...");
 
         while (!feof(fp))
         {
-            Cooperate();			/* let messages flow */
+            if ((++coop_ctr & 0x3f) == 0)
+                Cooperate();			/* let messages flow periodically */
             rmax = 1024;
-            Buf = DFrealloc(Buf, recptr+rmax);	/* inflate buffer */
-            memset(Buf+recptr, 0, rmax);	/* clear new area */
-            fgets(Buf+recptr, 512, fp);		/* read more data */
-            if ( (expandTabs == -1) && (cfg.Tabs > 1) &&
+            if (recptr + rmax + 512 > buf_cap)
+            {
+                unsigned int new_cap = buf_cap + 65536;
+                char *new_buf;
+                if (new_cap > MAXTEXTLEN + 65536)
+                {
+                    fclose(fp);
+                    free(Buf);
+                    SendMessage(wwnd, CLOSE_WINDOW, 0, 0);
+                    ErrorMessage("File exceeded 32 MB limit while reading.");
+                    return;
+                }
+                new_buf = realloc(Buf, new_cap);
+                if (new_buf == NULL)
+                {
+                    fclose(fp);
+                    free(Buf);
+                    SendMessage(wwnd, CLOSE_WINDOW, 0, 0);
+                    ErrorMessage("Ran out of memory while loading file.");
+                    return;
+                }
+                Buf = new_buf;
+                memset(Buf + buf_cap, 0, new_cap - buf_cap);
+                buf_cap = new_cap;
+            }
+            if (fgets(Buf+recptr, 512, fp) == NULL)
+                break;
+            if ( (expandTabs == -1) && (SysConfig.EditorTabSize > 1) &&
                  (strchr(Buf+recptr,'\t') != NULL) )
             {
                 char tMsg[200];
 
-    						SendMessage(wwnd, CLOSE_WINDOW, 0, 0);
+                SendMessage(wwnd, CLOSE_WINDOW, 0, 0);
 
                 sprintf(tMsg,"Tabs detected in\n%s\nExpand them at tab width %d?",
                     (strlen(wnd->extension)>120) ? "file" : wnd->extension,
-                    cfg.Tabs);
+                    SysConfig.EditorTabSize);
                 expandTabs = (YesNoBox(tMsg))
                    ? 1 : 0;
 
-    	  				wwnd = WatchIcon();
+                wwnd = MomentaryMessage("Loading...");
 
             }
             for (i=0; Buf[recptr+i]; i++)
@@ -585,52 +600,62 @@ static void LoadFile(WINDOW wnd)
                     case '\n':
                         theColumn = 0;
                         break;
-                    /* backspace intentionally not handled */
                     case '\t':
                         if (expandTabs == 1)
                         {
-	                    if ((strlen(Buf+recptr)+cfg.Tabs+8 /* 5 */) >= rmax)
-	                    /* changed extra offset from 5 to 8 for 0.7b */
-        	            {
-                	        rmax += 512;
-	                        Buf = DFrealloc(Buf, recptr+rmax);
-        	                memset(Buf+recptr+rmax-512, 0, 512);
-                	    };
-                            {   /* limit scope of j */
-                                int j = cfg.Tabs - (theColumn % cfg.Tabs);
-                                /* move by dist. to next tab, pad with ' ' */
-/* BROKEN 0.7a version:
-                                strcpy(Buf+recptr+i+j, Buf+recptr+i+1);
- */ /* Fixed 0.7b version: */
-				memmove(Buf+recptr+i+j, Buf+recptr+i+1, rmax-i-j);
-/* end of 0.7b fix */
-                                /* ... +1 as we do not copy the \t itself */
+                            if ((strlen(Buf+recptr)+SysConfig.EditorTabSize+8) >= rmax)
+                            {
+                                rmax += 512;
+                                if (recptr + rmax > buf_cap)
+                                {
+                                    unsigned int new_cap = buf_cap + 65536;
+                                    char *new_buf = realloc(Buf, new_cap);
+                                    if (new_buf == NULL)
+                                    {
+                                        fclose(fp);
+                                        free(Buf);
+                                        SendMessage(wwnd, CLOSE_WINDOW, 0, 0);
+                                        ErrorMessage("Ran out of memory expanding tabs.");
+                                        return;
+                                    }
+                                    Buf = new_buf;
+                                    memset(Buf + buf_cap, 0, new_cap - buf_cap);
+                                    buf_cap = new_cap;
+                                }
+                            }
+                            {
+                                int j = SysConfig.EditorTabSize - (theColumn % SysConfig.EditorTabSize);
+                                memmove(Buf+recptr+i+j, Buf+recptr+i+1, rmax-i-j);
                                 memset(Buf+recptr+i, ' ', j);
                                 theColumn += j;
-                                i += j; /* do not read padding again */
-                                i--;	/* because of i++ in the loop */
-                            };
+                                i += j;
+                                i--;
+                            }
                         } else
-                            theColumn++; /* do not expand */
+                            theColumn++;
                         break;
                     default:
                         theColumn++;
-                } /* switch */
-            } /* for */
-            recptr += strlen(Buf+recptr);	/* add read-len */
-        } /* while not eof */
-
-	fclose(fp);
-        if (Buf != NULL)
-        {
-            SendMessage(wnd, SETTEXT, (PARAM) Buf, 0); /* paste read text */
-            free(Buf); /* buffer no longer needed */
+                }
+            }
+            recptr += strlen(Buf+recptr);
         }
 
-    		SendMessage(wwnd, CLOSE_WINDOW, 0, 0);
+        fclose(fp);
+        if (Buf != NULL)
+        {
+            if (strlen(Buf) > wnd->MaxTextLength)
+            {
+                ErrorMessage("File contents exceed maximum document size (32 MB).");
+            }
+            else
+            {
+                SendMessage(wnd, SETTEXT, (PARAM) Buf, 0);
+            }
+            free(Buf);
+        }
 
-        /* else ran out of memory? */
-
+        SendMessage(wwnd, CLOSE_WINDOW, 0, 0);
     }
     else
     {
@@ -642,81 +667,6 @@ static void LoadFile(WINDOW wnd)
 
 }
 
-/* ------- print a character -------- */
-static void PrintChar(FILE *prn, int c)
-{
-    int i;
-    if (c == '\n' || CharCtr == cfg.RightMargin)
-        {
-        fputs("\r\n", prn);
-        LineCtr++;
-        if (LineCtr == cfg.BottomMargin)
-            {
-            fputc('\f', prn);
-            for (i = 0; i < cfg.TopMargin; i++)
-                fputc('\n', prn);
-
-            LineCtr = cfg.TopMargin;
-            }
-
-        CharCtr = 0;
-        if (c == '\n')
-            return;
-
-        }
-
-    if (CharCtr == 0)
-        {
-        for (i = 0; i < cfg.LeftMargin; i++)
-            {
-            fputc(' ', prn);
-            CharCtr++;
-            }
-
-	}
-
-    CharCtr++;
-    fputc(c, prn);
-
-}
-
-/* --- print the current notepad --- */
-static void PrintPad(WINDOW wnd)
-{
-	if (*cfg.PrinterPort)   {
-		FILE *prn;
-		if ((prn = fopen(cfg.PrinterPort, "wt")) != NULL)       {
-			long percent;
-			BOOL KeepPrinting = TRUE;
-		    unsigned char *text = GetText(wnd);
-			unsigned oldpct = 100, cct = 0, len = strlen(text);
-			/* the ONLY place where slidebox is used right now: */
-			WINDOW swnd = SliderBox(20, GetTitle(wnd), "Printing");
-		/* ------- print the notepad text --------- */
-			LineCtr = CharCtr = 0;
-			while (KeepPrinting && *text)   {
-				PrintChar(prn, *text++);
-				percent = ((long) ++cct * 100) / len;
-				if ((int) percent != oldpct)    {
-					oldpct = (int) percent;
-					KeepPrinting = SendMessage(swnd, PAINT, 0, oldpct);
-				}
-		}
-			if (KeepPrinting)
-				/* ---- user did not cancel ---- */
-				if (oldpct < 100)
-					SendMessage(swnd, PAINT, 0, 100);
-			/* ------- follow with a form feed? --------- */
-			if (YesNoBox("Form Feed?"))
-			fputc('\f', prn);
-			fclose(prn);
-		}
-		else
-			ErrorMessage("Cannot open printer file");
-	}
-	else
-		ErrorMessage("No printer selected");
-}
 
 /* ---------- save a file to disk ------------ */
 static void SaveFile(WINDOW wnd, int Saveas)
@@ -725,7 +675,7 @@ static void SaveFile(WINDOW wnd, int Saveas)
 
     if (wnd->extension == NULL || Saveas) /* ask for new name? */
         {
-        char FileName[64];
+        char FileName[MAXPATH];
 
 	FileName[0] = 0;
 	trySaveAgain:	/* moved label up in 0.7c */
@@ -739,6 +689,7 @@ static void SaveFile(WINDOW wnd, int Saveas)
             strcpy(wnd->extension, FileName);
             AddTitle(wnd, NameComponent(FileName));
             SendMessage(wnd, BORDER, 0, 0);
+            SetHighlightType(wnd, wnd->extension);
             }
         else
             {
@@ -786,31 +737,13 @@ static void SaveFile(WINDOW wnd, int Saveas)
         } /* if any file loaded */
 }
 
-/* -------- delete a file ------------ */
-#ifdef DELFILE
-static void DeleteFile(WINDOW wnd)
-{
-    if (wnd->extension != NULL)    {
-	if (strcmp(wnd->extension, Untitled))    {
-	    char *fn = NameComponent(wnd->extension);
-	    if (fn != NULL)    {
-		char msg[150];
-		sprintf(msg, "Delete %s?", (strlen(fn)>100) ? "file" : fn);
-		if (YesNoBox(msg)) {
-		    unlink(wnd->extension);
-		    SendMessage(wnd, CLOSE_WINDOW, 0, 0);
-		}
-	    }
-	}
-    }
-}
-#endif
-
 /* ------ display the row and column in the statusbar ------ */
 static void ShowPosition(WINDOW wnd)
 {
     /* This is where we place the "INS" display */
     char status[40], *InsModeText;
+    int cur_line = (wnd->CurrLine < 0) ? 0 : wnd->CurrLine;
+    int cur_col = (wnd->CurrCol < 0) ? 0 : wnd->CurrCol;
     if (wnd->InsertMode)
         {
         InsModeText = "INS ";           /* Not on */
@@ -823,15 +756,15 @@ static void ShowPosition(WINDOW wnd)
     if (WindowWidth(wnd) < 50) /* auto-condense new in EDIT 0.7 */
         {
         sprintf(status, "%c %c Li:%d Co:%d", 
-            (cfg.ReadOnlyMode) ? 'R' : (wnd->TextChanged ? '*' : ' '),
-            InsModeText[0], (wnd->CurrLine)+1, (wnd->CurrCol)+1);
+            (SysConfig.EditorGlobalReadOnly) ? 'R' : (wnd->TextChanged ? '*' : ' '),
+            InsModeText[0], cur_line+1, cur_col+1);
             /* 1-based column / row are nicer for humans (EDIT 0.7b) */
             /* new flag char R for readonly added 0.7b */
         }
     else
         sprintf(status, "%c %4s  Line: %4d  Col: %3d ",
-            (cfg.ReadOnlyMode) ? 'R' : (wnd->TextChanged ? '*' : ' '),
-            InsModeText, (wnd->CurrLine)+1, (wnd->CurrCol)+1);
+            (SysConfig.EditorGlobalReadOnly) ? 'R' : (wnd->TextChanged ? '*' : ' '),
+            InsModeText, cur_line+1, cur_col+1);
             /* 1-based column / row are nicer for humans (EDIT 0.7b) */
             /* new flag char R for readonly added 0.7b */
     SendMessage(GetParent(wnd), ADDSTATUS, (PARAM) status, 0);
@@ -859,15 +792,13 @@ static int EditorProc(WINDOW wnd,MESSAGE msg,PARAM p1,PARAM p2)
 	    ShowPosition(wnd);
 	    return rtn;
 	case COMMAND:
-	    if (cfg.ReadOnlyMode && TestAttribute(wnd, READONLY)) {
+	    if (SysConfig.EditorGlobalReadOnly && TestAttribute(wnd, READONLY)) {
     	    	/* read only mode added 0.7b */
 	        switch ((int)p1) {
 	            case ID_REPLACE:
 	            case ID_CUT:
 	            case ID_PASTE:
 	            case ID_DELETETEXT:
-	            case ID_CLEAR:
-	            case ID_PARAGRAPH:
 	                beep();
 	                return TRUE;	/* consume event */
 	        }
@@ -897,25 +828,39 @@ static int EditorProc(WINDOW wnd,MESSAGE msg,PARAM p1,PARAM p2)
 				SendMessage(wnd, PAINT, 0, 0);
 				return TRUE;
 			case ID_DELETETEXT:
-			case ID_CLEAR:
 				rtn = DefaultWndProc(wnd, msg, p1, p2);
 				SendMessage(wnd, PAINT, 0, 0);
 				return rtn;
-			case ID_HELP:
-				DisplayHelp(wnd, "MEMOPADDOC");
-				return TRUE;
 			case ID_WRAP:
-				SendMessage(GetParent(wnd), COMMAND, ID_WRAP, 0);
-				wnd->WordWrapMode = cfg.WordWrap;
+				wnd->WordWrapMode = WordWrap;
+				if (wnd->text != NULL) {
+					char *cp = CurrChar;
+					unsigned int off = (unsigned int)(cp - wnd->text);
+					wnd->wleft = 0;
+					BuildTextPointers(wnd);
+					if (wnd->wlines == 0) {
+						wnd->CurrLine = 0;
+						wnd->CurrCol = 0;
+						wnd->wtop = 0;
+						wnd->WndRow = 0;
+					} else {
+						wnd->CurrLine = TextLineNumber(wnd, wnd->text + off);
+						wnd->CurrCol = (int)((wnd->text + off) - TextLine(wnd, wnd->CurrLine));
+						if (wnd->CurrLine < wnd->wtop)
+							wnd->wtop = wnd->CurrLine;
+						else if (wnd->CurrLine >= wnd->wtop + ClientHeight(wnd))
+							wnd->wtop = max(0, wnd->CurrLine - ClientHeight(wnd) + 1);
+						wnd->WndRow = wnd->CurrLine - wnd->wtop;
+					}
+					SendMessage(wnd, PAINT, 0, 0);
+					SendMessage(wnd, KEYBOARD_CURSOR, WndCol, wnd->WndRow);
+				}
 				return TRUE;
 			case ID_INSERT:
 				SendMessage(GetParent(wnd), COMMAND, ID_INSERT, 0);
-				wnd->InsertMode = cfg.InsertMode;
+				wnd->InsertMode = InsertMode;
 				SendMessage(NULL, SHOW_CURSOR, wnd->InsertMode, 0);
 				return TRUE;
-      case ID_DISPLAY:
-     		DisplayProperties (wnd);
-        break;
 			default:
 				break;
 	    	} 	/* end of switch int p1 */
@@ -954,7 +899,24 @@ static int EditorProc(WINDOW wnd,MESSAGE msg,PARAM p1,PARAM p2)
 	default:
 	    break;
     }
-    return DefaultWndProc(wnd, msg, p1, p2);
+    rtn = DefaultWndProc(wnd, msg, p1, p2);
+    if (msg == CLOSE_WINDOW && ZenMode && !HasOpenEditor()) {
+        if (EditApplication != NULL) {
+            if (EditApplication->MenuBarWnd != NULL) {
+                SetVisible(EditApplication->MenuBarWnd);
+                ReFocus(EditApplication->MenuBarWnd);
+                SendMessage(EditApplication->MenuBarWnd, PAINT, 0, 0);
+            }
+            if (EditApplication->StatusBar != NULL) {
+                SetVisible(EditApplication->StatusBar);
+                ReFocus(EditApplication->StatusBar);
+                SendMessage(EditApplication->StatusBar, PAINT, 0, 0);
+            }
+            SendMessage(EditApplication, SETFOCUS, TRUE, 0);
+            SendMessage(EditApplication, PAINT, 0, 0);
+        }
+    }
+    return rtn;
 }
 
 /* -- point to the name component of a file specification -- */
@@ -973,62 +935,6 @@ static char *ports[] = {
 	 NULL
 };
 
-static int PrintSetupProc(WINDOW wnd, MESSAGE msg, PARAM p1, PARAM p2)
-{
-	int rtn, i = 0, mar;
-	char marg[10];
-	WINDOW cwnd;
-    switch (msg)    {
-		case CREATE_WINDOW:
-		    rtn = DefaultWndProc(wnd, msg, p1, p2);
-			PutItemText(wnd, ID_PRINTERPORT, cfg.PrinterPort);
-			while (ports[i] != NULL)
-				PutComboListText(wnd, ID_PRINTERPORT, ports[i++]);
-			for (mar = CHARSLINE; mar >= 0; --mar)  {
-				sprintf(marg, "%3d", mar);
-				PutItemText(wnd, ID_LEFTMARGIN, marg);
-				PutItemText(wnd, ID_RIGHTMARGIN, marg);
-			}
-			for (mar = LINESPAGE; mar >= 0; --mar)  {
-				sprintf(marg, "%3d", mar);
-				PutItemText(wnd, ID_TOPMARGIN, marg);
-				PutItemText(wnd, ID_BOTTOMMARGIN, marg);
-			}
-			cwnd = ControlWindow(&PrintSetup, ID_LEFTMARGIN);
-			SendMessage(cwnd, LB_SETSELECTION,
-				CHARSLINE-cfg.LeftMargin, 0);
-			cwnd = ControlWindow(&PrintSetup, ID_RIGHTMARGIN);
-			SendMessage(cwnd, LB_SETSELECTION,
-				CHARSLINE-cfg.RightMargin, 0);
-			cwnd = ControlWindow(&PrintSetup, ID_TOPMARGIN);
-			SendMessage(cwnd, LB_SETSELECTION,
-				LINESPAGE-cfg.TopMargin, 0);
-			cwnd = ControlWindow(&PrintSetup, ID_BOTTOMMARGIN);
-			SendMessage(cwnd, LB_SETSELECTION,
-				LINESPAGE-cfg.BottomMargin, 0);
-			return rtn;
-		case COMMAND:
-			if ((int) p1 == ID_OK && (int) p2 == 0) {
-				GetItemText(wnd, ID_PRINTERPORT, cfg.PrinterPort, 4);
-				cwnd = ControlWindow(&PrintSetup, ID_LEFTMARGIN);
-				cfg.LeftMargin = CHARSLINE -
-					SendMessage(cwnd, LB_CURRENTSELECTION, 0, 0);
-				cwnd = ControlWindow(&PrintSetup, ID_RIGHTMARGIN);
-				cfg.RightMargin = CHARSLINE -
-					SendMessage(cwnd, LB_CURRENTSELECTION, 0, 0);
-				cwnd = ControlWindow(&PrintSetup, ID_TOPMARGIN);
-				cfg.TopMargin = LINESPAGE -
-					SendMessage(cwnd, LB_CURRENTSELECTION, 0, 0);
-				cwnd = ControlWindow(&PrintSetup, ID_BOTTOMMARGIN);
-				cfg.BottomMargin = LINESPAGE -
-					SendMessage(cwnd, LB_CURRENTSELECTION, 0, 0);
-			}
-			break;
-	default:
-	    break;
-	}
-    return DefaultWndProc(wnd, msg, p1, p2);
-}
 
 static void FixTabMenu(void)
 {
@@ -1036,7 +942,7 @@ static void FixTabMenu(void)
 	if (cp != NULL) {
 		cp = strchr(cp, '(');
 		if (cp != NULL) {
-			*(cp+1) = (cfg.Tabs>1) ? (cfg.Tabs + '0') : '-';
+			*(cp+1) = (SysConfig.EditorTabSize>1) ? (SysConfig.EditorTabSize + '0') : '-';
 			if (GetClass(inFocus) == POPDOWNMENU)
 				SendMessage(inFocus, PAINT, 0, 0);
 		}
@@ -1053,25 +959,20 @@ void PrepFileMenu(void *w, struct Menu *mnu)
     DeactivateCommand(&MainMenu, ID_SAVE);
     DeactivateCommand(&MainMenu, ID_SAVEAS);
     DeactivateCommand(&MainMenu, ID_CLOSE);
-/*  DeactivateCommand(&MainMenu, ID_DELETEFILE); */
-    DeactivateCommand(&MainMenu, ID_PRINT);
 
-    if (cfg.ReadOnlyMode) {		/* new in 0.7b */
+    if (SysConfig.EditorGlobalReadOnly) {		/* new in 0.7b */
         DeactivateCommand(&MainMenu, ID_NEW);
-        DeactivateCommand(&MainMenu, ID_DOS); /* make viewer mode "safe" */
     }
 
     if (wnd != NULL && GetClass(wnd) == EDITBOX)
         {
         if (isMultiLine(wnd))
             {
-            if (!cfg.ReadOnlyMode) {	/* new in 0.7b */
+            if (!SysConfig.EditorGlobalReadOnly) {	/* new in 0.7b */
                 ActivateCommand(&MainMenu, ID_SAVE);
                 ActivateCommand(&MainMenu, ID_SAVEAS);
             }
             ActivateCommand(&MainMenu, ID_CLOSE);
-/*          ActivateCommand(&MainMenu, ID_DELETEFILE);  */
-            ActivateCommand(&MainMenu, ID_PRINT);
             }
 
 	}
@@ -1091,7 +992,7 @@ void PrepSearchMenu(void *w, struct Menu *mnu)
     if (wnd != NULL && GetClass(wnd) == EDITBOX) {
 	if (isMultiLine(wnd))   {
 	    ActivateCommand(&MainMenu, ID_SEARCH);
-            if (!cfg.ReadOnlyMode) {	/* new in 0.7b */
+            if (!SysConfig.EditorGlobalReadOnly) {	/* new in 0.7b */
 	        ActivateCommand(&MainMenu, ID_REPLACE);
 	    }
 	    ActivateCommand(&MainMenu, ID_SEARCHNEXT);
@@ -1107,27 +1008,18 @@ void PrepEditMenu(void *w, struct Menu *mnu)
 
     DeactivateCommand(&MainMenu, ID_CUT);
     DeactivateCommand(&MainMenu, ID_COPY);
-    DeactivateCommand(&MainMenu, ID_CLEAR);
     DeactivateCommand(&MainMenu, ID_DELETETEXT);
-    DeactivateCommand(&MainMenu, ID_PARAGRAPH);
     DeactivateCommand(&MainMenu, ID_PASTE);
     DeactivateCommand(&MainMenu, ID_UNDO);
-    DeactivateCommand(&MainMenu, ID_UPCASE);	/* new in 0.7d */
-    DeactivateCommand(&MainMenu, ID_DOWNCASE);	/* new in 0.7d */
-    ActivateCommand(&MainMenu, ID_WORDCOUNT);	/* new in 0.7d */
     if (wnd != NULL && GetClass(wnd) == EDITBOX) {
 	if (isMultiLine(wnd) &&
-	    (!cfg.ReadOnlyMode)) {	/* new mode in 0.7b */
+	    (!SysConfig.EditorGlobalReadOnly)) {	/* new mode in 0.7b */
 
 	    if (TextBlockMarked(wnd))       {
 		ActivateCommand(&MainMenu, ID_CUT);
 		ActivateCommand(&MainMenu, ID_COPY);
-		ActivateCommand(&MainMenu, ID_CLEAR);
 		ActivateCommand(&MainMenu, ID_DELETETEXT);
-                ActivateCommand(&MainMenu, ID_UPCASE); /* new in 0.7d */
-                ActivateCommand(&MainMenu, ID_DOWNCASE); /* new in 0.7d */
 	    }
-	    ActivateCommand(&MainMenu, ID_PARAGRAPH);
 	    if (!TestAttribute(wnd, READONLY) &&
 		Clipboard != NULL)
 		ActivateCommand(&MainMenu, ID_PASTE);
@@ -1205,15 +1097,21 @@ void PrepWindowMenu(void *w, struct Menu *mnu)
         } /* while in linked list of enumerateable windows */
     } /* build window list popdown menu */
 
-    if (MenuNo)
-        p0->SelectionTitle = "~Close all";
-    else
-        p0->SelectionTitle = NULL;
+    p0->SelectionTitle = "~Close all";
+    if (MenuNo) {
+        p0->Attrib &= ~INACTIVE;
+        (mnu->Selections + 1)->SelectionTitle = (unsigned char *)SEPCHAR;
+    }
+    else {
+        p0->Attrib |= INACTIVE;
+        (mnu->Selections + 1)->SelectionTitle = NULL;
+    }
     if (MenuNo >= 9)    {
         *pd++ = *ca;
         if (mnu->Selection == 0)
             mnu->Selection = 11;
     }
-    pd->SelectionTitle = NULL;
+    if (MenuNo > 0)
+        pd->SelectionTitle = NULL;
 }
 
