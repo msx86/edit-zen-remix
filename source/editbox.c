@@ -459,7 +459,6 @@ static void DoMultiLines(WINDOW wnd, int c, PARAM p2)
                 case PGUP:
                 case CTRL_PGUP:
                 case UP:
-                case BS:
                 case END:
                 case CTRL_END:
                 case PGDN:
@@ -790,6 +789,11 @@ static void DoKeyStroke(WINDOW wnd, int c, PARAM p2)
 
     switch (c)    {
         case BS:	/* formerly called RUBOUT */
+		if (TextBlockMarked(wnd)) {
+			SendMessage(wnd, COMMAND, ID_DELETETEXT, 0);
+			SendMessage(wnd, PAINT, 0, 0);
+			break;
+		}
 		if (wnd->CurrCol == 0 && wnd->CurrLine == 0)
 			break;
 #ifdef HOOKKEYB
@@ -1015,6 +1019,8 @@ static void DeleteTextCmd(WINDOW wnd)
         }
         SendMessage(wnd, KEYBOARD_CURSOR, WndCol, wnd->WndRow);
         ClearTextBlock(wnd);
+        KeyBoardMarking = FALSE;
+        TextMarking = FALSE;
         BuildTextPointers(wnd);
     }
 }

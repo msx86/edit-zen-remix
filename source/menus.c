@@ -7,7 +7,7 @@
 
 DEFPROGRAM
   MOD_DESCRIPTION("FreeDOS Edit Zen Remix")
-  MOD_VERSION(1,0,0,0)
+  MOD_VERSION(1,0,0,1)
   MOD_COPYRIGHT("")
   MOD_LICENSE("GNU GPL 2.0")
   MOD_ABOUT("A low distraction writing environment for DOS")
